@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_all
 
-datas = [('assets', 'assets'), ('contract_pdfs', 'contract_pdfs'), ('backups', 'backups')]
+datas = [('assets', 'assets')]
 binaries = []
 hiddenimports = ['customtkinter', 'tkcalendar', 'dateutil', 'PIL', 'babel.numbers']
 tmp_ret = collect_all('customtkinter')
