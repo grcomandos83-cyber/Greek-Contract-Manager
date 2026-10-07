@@ -10,6 +10,7 @@ from collections import OrderedDict
 
 from datetime import datetime
 from typing import List, Dict, Any, Optional
+import updater
 
 # Configure logging
 logging.basicConfig(
@@ -136,6 +137,9 @@ class ContractApp(ctk.CTk):
         
         # Αρχικοποίηση συστήματος ειδοποιήσεων
         notification_manager.set_root(self)
+        
+        # Έλεγχος για νέες εκδόσεις (αυτόματη ενημέρωση)
+        updater.check_for_updates(self)
         
         # Cleanup κατά το κλείσιμο
         self.protocol("WM_DELETE_WINDOW", self._on_closing)

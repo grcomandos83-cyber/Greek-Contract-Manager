@@ -1,5 +1,7 @@
 # Οδηγός Χρήσης: Σύστημα Διαχείρισης Συμβάσεων (Contract Manager)
 
+[![Κατέβασμα για Windows](https://img.shields.io/badge/Κατέβασμα-για_Windows-blue?style=for-the-badge&logo=windows)](https://github.com/grcomandos83-cyber/contract-manager-sqlite/releases/latest/download/ContractManager.exe)
+
 Καλώς ήρθατε στην εφαρμογή διαχείρισης συμβάσεων! Η εφαρμογή έχει σχεδιαστεί για να κάνει την παρακολούθηση, την οργάνωση και την αποθήκευση των συμβάσεών σας πιο εύκολη και γρήγορη.
 
 ## Τι μπορείτε να κάνετε με την εφαρμογή

@@ -4,6 +4,10 @@ SETTINGS_FILE = "settings.json"
 PDF_FOLDER = "contract_pdfs"
 BACKUP_FOLDER = "backups"
 
+# --- Στοιχεία Εφαρμογής & Ενημερώσεων ---
+APP_VERSION = "v1.0.0"
+GITHUB_REPO = "grcomandos83-cyber/contract-manager-sqlite"
+
 # =========================================================================
 # === ΧΡΩΜΑΤΙΚΑ ΘΕΜΑΤΑ ===
 # =========================================================================
