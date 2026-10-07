@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+Lib/
+Scripts/
+pyvenv.cfg
+
+# Local databases and app data
+*.db
+*.sqlite
+*.sqlite3
+contracts.json
+contracts.json.backup
+settings.json
+
+# Contract documents and backups
+contract_pdfs/
+backups/
+*.pdf
+
+# Logs
+*.log
+
+# Build artifacts
+build/
+dist/
+
+# Installer / downloaded tooling
+get-pip.py
+*.docx
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Temporary files
+*.tmp
+*.temp
+~$*

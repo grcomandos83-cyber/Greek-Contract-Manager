@@ -1,0 +1,3 @@
+customtkinter
+tkcalendar
+python-dateutil
