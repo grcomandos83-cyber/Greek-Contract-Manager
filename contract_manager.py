@@ -23,7 +23,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-from constants import DB_FILE, SETTINGS_FILE, PDF_FOLDER, BACKUP_FOLDER, COLOR_THEMES, SPECIAL_FIELD_TRANSLATIONS
+from constants import DB_FILE, SETTINGS_FILE, PDF_FOLDER, BACKUP_FOLDER, COLOR_THEMES, SPECIAL_FIELD_TRANSLATIONS, APP_VERSION
 from utils import create_backup, get_contract_status, get_resource_path
 from database import DatabaseManager
 from ui_forms import ContractFormToplevel, AdvancedSearchToplevel, CategoryManagerWindow
@@ -49,7 +49,7 @@ class ContractApp(ctk.CTk):
     def __init__(self):
         super().__init__()
 
-        self.title("Διαχείριση Συμβάσεων Pro - SQLite Refactored")
+        self.title(f"Διαχείριση Συμβάσεων Pro - {APP_VERSION}")
         
         WINDOW_WIDTH = 1280
         WINDOW_HEIGHT = 850
