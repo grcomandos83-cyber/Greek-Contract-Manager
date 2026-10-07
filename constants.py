@@ -6,7 +6,7 @@ BACKUP_FOLDER = "backups"
 
 # --- Στοιχεία Εφαρμογής & Ενημερώσεων ---
 APP_VERSION = "v1.0.6"
-GITHUB_REPO = "grcomandos83-cyber/contract-manager-sqlite"
+GITHUB_REPO = "grcomandos83-cyber/Greek-Contract-Manager"
 
 # =========================================================================
 # === ΧΡΩΜΑΤΙΚΑ ΘΕΜΑΤΑ ===

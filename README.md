@@ -1,6 +1,6 @@
 # Οδηγός Χρήσης: Σύστημα Διαχείρισης Συμβάσεων (Contract Manager)
 
-[![Κατέβασμα για Windows](https://img.shields.io/badge/Κατέβασμα-για_Windows-blue?style=for-the-badge&logo=windows)](https://github.com/grcomandos83-cyber/contract-manager-sqlite/releases/latest/download/ContractManager.exe)
+[![Κατέβασμα για Windows](https://img.shields.io/badge/Κατέβασμα-για_Windows-blue?style=for-the-badge&logo=windows)](https://github.com/grcomandos83-cyber/Greek-Contract-Manager/releases/latest/download/ContractManager.exe)
 
 ![Στιγμιότυπο Εφαρμογής](screenshot.png)
 
