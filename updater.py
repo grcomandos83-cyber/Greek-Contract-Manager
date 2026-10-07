@@ -70,6 +70,8 @@ def _download_and_apply(download_url):
     
     # Το script: περιμένει 2 δεύτερα, διαγράφει το παλιό exe, μετονομάζει το νέο, το τρέχει και διαγράφει τον εαυτό του.
     bat_content = f"""@echo off
+set _MEIPASS2=
+set _MEIPASS=
 timeout /t 2 /nobreak > nul
 del "{current_exe}"
 ren "{new_exe}" "{os.path.basename(current_exe)}"
@@ -80,12 +82,5 @@ del "%~f0"
         f.write(bat_content)
         
     # 3. Εκτέλεση του bat script και έξοδος
-    # ΣΗΜΑΝΤΙΚΟ: Καθαρίζουμε τα env variables του PyInstaller
-    # αλλιώς το νέο exe ψάχνει DLLs στον παλιό (διαγραμμένο) φάκελο _MEI
-    env = os.environ.copy()
-    env.pop('_MEIPASS2', None)
-    env.pop('_MEIPASS', None)
-    env.pop('PYI_DEFAULT_COMPAT', None)
-    
-    subprocess.Popen([bat_path], shell=True, env=env)
+    subprocess.Popen([bat_path], shell=True)
     sys.exit(0)
