@@ -82,5 +82,16 @@ del "%~f0"
         f.write(bat_content)
         
     # 3. Εκτέλεση του bat script και έξοδος
-    subprocess.Popen([bat_path], shell=True)
+    # ΣΗΜΑΝΤΙΚΟ: Καθαρίζουμε το _MEIPASS από το PATH
+    env = os.environ.copy()
+    env.pop('_MEIPASS2', None)
+    env.pop('_MEIPASS', None)
+    
+    meipass = getattr(sys, '_MEIPASS', None)
+    if meipass:
+        path_env = env.get('PATH', '')
+        paths = [p for p in path_env.split(os.pathsep) if p != meipass]
+        env['PATH'] = os.pathsep.join(paths)
+        
+    subprocess.Popen([bat_path], shell=True, env=env)
     sys.exit(0)
