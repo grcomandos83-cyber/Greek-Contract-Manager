@@ -70,12 +70,10 @@ def _download_and_apply(download_url):
     
     # Το script: περιμένει 2 δεύτερα, διαγράφει το παλιό exe, μετονομάζει το νέο, το τρέχει και διαγράφει τον εαυτό του.
     bat_content = f"""@echo off
-set _MEIPASS2=
-set _MEIPASS=
-timeout /t 2 /nobreak > nul
+timeout /t 3 /nobreak > nul
 del "{current_exe}"
 ren "{new_exe}" "{os.path.basename(current_exe)}"
-start "" "{current_exe}"
+explorer "{current_exe}"
 del "%~f0"
 """
     with open(bat_path, "w", encoding="utf-8") as f:
