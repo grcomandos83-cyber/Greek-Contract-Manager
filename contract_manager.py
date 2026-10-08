@@ -11,6 +11,14 @@ from collections import OrderedDict
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 import updater
+import sys
+import os
+
+# Αλλαγή του CWD στον φάκελο του εκτελέσιμου για να αποθηκεύονται σωστά το log και η βάση.
+if getattr(sys, 'frozen', False):
+    os.chdir(os.path.dirname(sys.executable))
+else:
+    os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
 # Configure logging
 logging.basicConfig(
