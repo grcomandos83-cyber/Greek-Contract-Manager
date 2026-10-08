@@ -384,10 +384,7 @@ class ContractFormToplevel(MessageBoxMixin, ctk.CTkToplevel):
         for field_key, field_label in fields_config.items():
             self.special_fields[field_key] = create_dynamic_entry(field_label)
 
-        if self.special_fields:
-            self.dynamic_fields_frame.pack(pady=5, padx=0, fill="x") 
-        else:
-            self.dynamic_fields_frame.pack_forget()
+        # Removed pack() and pack_forget() to maintain original layout position.
 
     def _select_pdf_files(self) -> None:
         """Επιλογή πολλαπλών αρχείων PDF"""
