@@ -577,7 +577,7 @@ class DatabaseManager:
             
             by_status = {"ACTIVE": 0, "EXPIRING_SOON": 0, "EXPIRED": 0, "NO_DATE": 0}
             for expiry_date in expiry_dates:
-                status = get_contract_status(expiry_date)
+                status = get_contract_status(_to_greek(expiry_date))
                 by_status[status] = by_status.get(status, 0) + 1
             
             return {
