@@ -74,103 +74,132 @@ def _download_and_apply(download_url):
         messagebox.showerror("Σφάλμα Λήψης", f"Αποτυχία λήψης νέας έκδοσης:\n{e}")
         return
 
-    # --- ΑΙΤΙΑ #1 & #3: Δημιουργία .bat με ANSI (cp1253 για Windows/Ελληνικά) ---
-    # Χρησιμοποιούμε %~1, %~2 (ορίσματα) αντί για hardcoded paths μέσα στο .bat,
-    # ώστε να αποφύγουμε παντελώς το πρόβλημα κωδικοποίησης των ελληνικών χαρακτήρων.
+    # -------------------------------------------------------------------------
+    # Build the .bat file
+    # -------------------------------------------------------------------------
     bat_path = os.path.join(exe_dir, "updater.bat")
 
-    # ΑΙΤΙΑ #4: Χρησιμοποιούμε 'start "" "..."' αντί για explorer.exe
-    # ΑΙΤΙΑ #5: Loop 10 φορών για να περιμένει να ξεκλειδώσει το παλιό .exe
-    # ΑΙΤΙΑ #7: Logging σε %TEMP%\cm_update.log
-    bat_content = """\
-@echo off
-chcp 65001 >nul 2>&1
-setlocal
-
-:: Ορίσματα: %1 = current_exe, %2 = new_exe
-set "CURRENT_EXE=%~1"
-set "NEW_EXE=%~2"
-set "LOG=%TEMP%\\cm_update.log"
-
-echo [%DATE% %TIME%] === Auto-update started === >> "%LOG%"
-echo [%DATE% %TIME%] CURRENT_EXE: %CURRENT_EXE% >> "%LOG%"
-echo [%DATE% %TIME%] NEW_EXE:     %NEW_EXE% >> "%LOG%"
-
-:: Αναμονή για να κλείσει η παλιά εφαρμογή
-timeout /t 3 /nobreak >nul
-
-:: --- ΑΙΤΙΑ #5: Επαναληπτική διαγραφή μέχρι να ξεκλειδώσει το αρχείο ---
-set /a TRIES=0
-:DELETE_LOOP
-del /f /q "%CURRENT_EXE%" >nul 2>&1
-if exist "%CURRENT_EXE%" (
-    set /a TRIES+=1
-    if %TRIES% LSS 10 (
-        echo [%DATE% %TIME%] Waiting for lock, attempt %TRIES%... >> "%LOG%"
-        timeout /t 2 /nobreak >nul
-        goto DELETE_LOOP
-    ) else (
-        echo [%DATE% %TIME%] ERROR: Could not delete old exe after 10 attempts. >> "%LOG%"
-        goto CLEANUP
+    # FIX-A: Pure ASCII content — no chcp, no Greek comments, no goto labels
+    # with non-ASCII chars. Paths are passed as %~1/%~2 arguments so the file's
+    # own encoding never touches the paths.
+    # FIX-A (wait): "ping 127.0.0.1 -n N" is used instead of "timeout /t N"
+    # because timeout requires an attached console; with CREATE_NO_WINDOW there
+    # is no console and timeout exits immediately (returns error), so the retry
+    # loop would spin without actually waiting.
+    bat_content = (
+        "@echo off\r\n"
+        "setlocal\r\n"
+        "\r\n"
+        "rem --- Arguments: %1 = current exe, %2 = new exe ---\r\n"
+        'set "CURRENT_EXE=%~1"\r\n'
+        'set "NEW_EXE=%~2"\r\n'
+        'set "LOG=%TEMP%\\cm_update.log"\r\n'
+        "\r\n"
+        "echo [%DATE% %TIME%] === Auto-update started === >> \"%LOG%\"\r\n"
+        "echo [%DATE% %TIME%] CURRENT_EXE: %CURRENT_EXE% >> \"%LOG%\"\r\n"
+        "echo [%DATE% %TIME%] NEW_EXE:     %NEW_EXE% >> \"%LOG%\"\r\n"
+        "\r\n"
+        "rem --- Initial wait: 3 pings = ~3 s, works without a console window ---\r\n"
+        "ping 127.0.0.1 -n 4 >nul\r\n"
+        "\r\n"
+        "rem --- Delete old exe with up to 15 retries (~2 s each) ---\r\n"
+        "set /a TRIES=0\r\n"
+        ":DEL_LOOP\r\n"
+        "del /f /q \"%CURRENT_EXE%\" >nul 2>&1\r\n"
+        "if exist \"%CURRENT_EXE%\" (\r\n"
+        "    set /a TRIES+=1\r\n"
+        "    if %TRIES% LSS 15 (\r\n"
+        "        echo [%DATE% %TIME%] Lock wait attempt %TRIES% >> \"%LOG%\"\r\n"
+        "        ping 127.0.0.1 -n 3 >nul\r\n"
+        "        goto DEL_LOOP\r\n"
+        "    ) else (\r\n"
+        "        echo [%DATE% %TIME%] ERROR: could not delete old exe >> \"%LOG%\"\r\n"
+        "        goto DONE\r\n"
+        "    )\r\n"
+        ")\r\n"
+        "echo [%DATE% %TIME%] Old exe deleted >> \"%LOG%\"\r\n"
+        "\r\n"
+        "rem --- Move new exe into place ---\r\n"
+        "move /y \"%NEW_EXE%\" \"%CURRENT_EXE%\" >> \"%LOG%\" 2>&1\r\n"
+        "if not exist \"%CURRENT_EXE%\" (\r\n"
+        "    echo [%DATE% %TIME%] ERROR: move failed >> \"%LOG%\"\r\n"
+        "    goto DONE\r\n"
+        ")\r\n"
+        "echo [%DATE% %TIME%] New exe in place >> \"%LOG%\"\r\n"
+        "\r\n"
+        "rem --- FIX-A (verify): check the new exe exists before launching ---\r\n"
+        "if not exist \"%CURRENT_EXE%\" (\r\n"
+        "    echo [%DATE% %TIME%] ERROR: exe missing before launch >> \"%LOG%\"\r\n"
+        "    goto DONE\r\n"
+        ")\r\n"
+        "\r\n"
+        "rem --- Launch: 'start \"\" ...' with empty title, NOT explorer.exe ---\r\n"
+        "echo [%DATE% %TIME%] Launching... >> \"%LOG%\"\r\n"
+        'start "" "%CURRENT_EXE%"\r\n'
+        "echo [%DATE% %TIME%] Launch issued >> \"%LOG%\"\r\n"
+        "\r\n"
+        ":DONE\r\n"
+        "echo [%DATE% %TIME%] === Auto-update finished === >> \"%LOG%\"\r\n"
+        "endlocal\r\n"
+        # Self-delete that works even when the bat is the running process
+        "(goto) 2>nul & del \"%~f0\"\r\n"
     )
-)
-echo [%DATE% %TIME%] Old exe deleted OK. >> "%LOG%"
 
-:: --- Μετακίνηση νέου .exe στη θέση του παλιού ---
-move /y "%NEW_EXE%" "%CURRENT_EXE%" >nul 2>&1
-if not exist "%CURRENT_EXE%" (
-    echo [%DATE% %TIME%] ERROR: move failed, new exe not found at destination. >> "%LOG%"
-    goto CLEANUP
-)
-echo [%DATE% %TIME%] New exe moved OK. >> "%LOG%"
-
-:: --- ΑΙΤΙΑ #8: Επαλήθευση ύπαρξης πριν την εκκίνηση ---
-if not exist "%CURRENT_EXE%" (
-    echo [%DATE% %TIME%] ERROR: new exe missing before launch. >> "%LOG%"
-    goto CLEANUP
-)
-
-:: --- ΑΙΤΙΑ #4: Εκκίνηση με start και κενό τίτλο, ΟΧΙ explorer ---
-echo [%DATE% %TIME%] Launching new exe... >> "%LOG%"
-start "" "%CURRENT_EXE%"
-echo [%DATE% %TIME%] Launch command issued OK. >> "%LOG%"
-
-:CLEANUP
-echo [%DATE% %TIME%] === Auto-update finished === >> "%LOG%"
-endlocal
-del "%~f0"
-"""
-
-    # --- ΑΙΤΙΑ #1: Γράφουμε το .bat με utf-8-sig ---
-    # Το CMD των Windows διαβάζει σωστά UTF-8 αφού τρέξουμε chcp 65001.
-    # Οι διαδρομές περνιούνται ως ορίσματα (εκτός bat), άρα δεν εξαρτόμαστε
-    # από την κωδικοποίηση του αρχείου για τα paths.
+    # FIX-A: Write as pure ASCII with explicit CRLF line endings
     try:
-        with open(bat_path, "w", encoding="utf-8") as f:
+        with open(bat_path, "w", encoding="ascii", newline="\r\n") as f:
             f.write(bat_content)
     except Exception as e:
         messagebox.showerror("Σφάλμα", f"Αποτυχία δημιουργίας script ενημέρωσης:\n{e}")
         return
 
-    # --- ΣΗΜΑΝΤΙΚΟ: Καθαρισμός _MEIPASS από το περιβάλλον (DLL fix) ---
-    env = os.environ.copy()
-    env.pop('_MEIPASS2', None)
-    env.pop('_MEIPASS', None)
-    for key in list(env.keys()):
-        if key.startswith('_PYI_'):
-            env.pop(key, None)
+    # -------------------------------------------------------------------------
+    # Build a clean environment for the bat / new exe
+    # -------------------------------------------------------------------------
+    # FIX-B: Remove _MEIPASS / _MEIPASS2 / _PYI_* variables (case-insensitive).
+    # These point to the temp folder of the *current* frozen process. If the new
+    # exe inherits them it tries to load DLLs from a folder that no longer exists
+    # once the old process exits → "Failed to load Python DLL" crash.
+    env = {}
+    for k, v in os.environ.items():
+        ku = k.upper()
+        if ku.startswith("_MEI") or ku.startswith("_PYI_"):
+            continue
+        env[k] = v
 
-    meipass = getattr(sys, '_MEIPASS', None)
+    # FIX-B: Tell PyInstaller 6.9+ to reset its internal state on next start
+    env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+
+    # FIX-B: Remove any PATH entries that live inside the current _MEIPASS dir.
+    # Use normcase+abspath so that case and trailing-slash differences don't matter.
+    meipass = getattr(sys, "_MEIPASS", None)
     if meipass:
-        path_env = env.get('PATH', '')
-        paths = [p for p in path_env.split(os.pathsep) if p != meipass]
-        env['PATH'] = os.pathsep.join(paths)
+        norm_meipass = os.path.normcase(os.path.abspath(meipass))
+        path_parts = env.get("PATH", "").split(os.pathsep)
+        filtered = [
+            p for p in path_parts
+            if not os.path.normcase(os.path.abspath(p)).startswith(norm_meipass)
+        ]
+        env["PATH"] = os.pathsep.join(filtered)
 
-    # Περνάμε τις διαδρομές ΩΣ ΟΡΙΣΜΑΤΑ στο bat για να αποφύγουμε encoding issues
+    # -------------------------------------------------------------------------
+    # Launch the bat and exit
+    # -------------------------------------------------------------------------
+    # FIX-C: cmd /d /s /c "..."  — the outer double-quotes are stripped by cmd
+    # itself (that is what /s does), so the inner "bat" "arg1" "arg2" are parsed
+    # correctly even when paths contain spaces or non-ASCII characters.
+    cmdline = f'cmd.exe /d /s /c ""{bat_path}" "{current_exe}" "{new_exe}""'
+
+    # FIX-D: DETACHED_PROCESS (0x8) lets the bat keep running after this process
+    # exits. CREATE_NO_WINDOW hides the console. cwd=exe_dir avoids inheriting a
+    # random working directory from explorer or a parent process.
+    DETACHED_PROCESS = 0x00000008
     subprocess.Popen(
-        f'cmd /c "{bat_path}" "{current_exe}" "{new_exe}"',
+        cmdline,
         shell=False,
         env=env,
-        creationflags=subprocess.CREATE_NO_WINDOW
+        cwd=exe_dir,
+        creationflags=subprocess.CREATE_NO_WINDOW | DETACHED_PROCESS,
+        close_fds=True,
     )
     sys.exit(0)
