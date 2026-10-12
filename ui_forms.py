@@ -214,11 +214,7 @@ class ContractFormToplevel(MessageBoxMixin, ctk.CTkToplevel):
         self.title_text = "Νέα Σύμβαση" if contract_to_edit is None else "Επεξεργασία Σύμβασης"
         self.title(self.title_text)
 
-<<<<<<< Updated upstream
-        self.width =  500
-=======
-        self.width =  500 
->>>>>>> Stashed changes
+        self.width = 500
         self.height = 600
         
         screen_width = self.winfo_screenwidth()
