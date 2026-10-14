@@ -133,6 +133,18 @@ class ContractListView(ctk.CTkScrollableFrame):
         action_frame = ctk.CTkFrame(checkbox_frame, fg_color="transparent")
         action_frame.pack(side="bottom")
         
+        if status == "EXPIRED" and 'renew_contract' in self.callbacks:
+            ctk.CTkButton(
+                action_frame,
+                text="🔄 Ανανέωση",
+                width=85,
+                fg_color=self.theme_colors["accent"],
+                hover_color="#219150" if self.theme_colors.get("accent") != "#219150" else "#1b7943",
+                height=24,
+                font=("Roboto", 11, "bold"),
+                command=lambda c=contract: self.callbacks['renew_contract'](c)
+            ).pack(side="left", padx=2)
+        
         ctk.CTkButton(action_frame, text="✎", width=30, fg_color="#d35400", height=24,
                      command=lambda c=contract: self.callbacks['edit_contract'](c)).pack(side="left", padx=2)
         
@@ -183,7 +195,7 @@ class ContractListView(ctk.CTkScrollableFrame):
                     text_color=self.theme_colors["primary"]).grid(row=0, column=0, sticky="w")
         
         ctk.CTkLabel(grid_frame, text=f"({contract['type']})", font=("Roboto", 15, "bold"), 
-                    text_color=("gray60", "#7b91a7")).grid(row=0, column=0, sticky="e", padx=(0, 150)) 
+                    text_color=("gray60", "#7b91a7")).grid(row=0, column=0, sticky="e", padx=(0, 20)) 
         
         info = f"Αρ: {contract['number']} | Ημ/νία Σύμβ.: {contract['date']} | Διάρκεια: {contract['months']} μήνες | Λήξη: {contract.get('expiry_date', 'N/A')}"
         ctk.CTkLabel(grid_frame, text=info, font=("Roboto", 14), text_color=("gray10", "gray90")).grid(row=1, column=0, sticky="w", pady=(2, 0))
@@ -191,17 +203,27 @@ class ContractListView(ctk.CTkScrollableFrame):
         # Special Fields
         special_data_str = contract.get('special_data', '{}')
         special_data_dict = {}
-        if special_data_str:
+        if isinstance(special_data_str, dict):
+            special_data_dict = special_data_str
+        elif isinstance(special_data_str, str) and special_data_str.strip():
             try:
-                special_data_dict = json.loads(special_data_str)
-            except json.JSONDecodeError:
-                pass
+                parsed = json.loads(special_data_str)
+                while isinstance(parsed, str):
+                    try:
+                        parsed = json.loads(parsed)
+                    except Exception:
+                        break
+                if isinstance(parsed, dict):
+                    special_data_dict = parsed
+            except Exception:
+                special_data_dict = {}
         
         translated_data = []
-        for key, value in special_data_dict.items():
-            if value and value is not False:
-                greek_key = SPECIAL_FIELD_TRANSLATIONS.get(key, key.replace('_', ' ').title())
-                translated_data.append(f"{greek_key}: {value}")
+        if isinstance(special_data_dict, dict):
+            for key, value in special_data_dict.items():
+                if value and value is not False:
+                    greek_key = SPECIAL_FIELD_TRANSLATIONS.get(key, key.replace('_', ' ').title())
+                    translated_data.append(f"{greek_key}: {value}")
         
         special_data_str = ", ".join(translated_data)
         if special_data_str: 

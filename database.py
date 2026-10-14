@@ -29,6 +29,7 @@ class DatabaseManager:
         self.db_file = db_file
         self._init_database()
         self._auto_migrate_dates()
+        self._auto_sanitize_special_data()
         
     @contextmanager
     def get_connection(self) -> Generator[sqlite3.Connection, None, None]:
@@ -212,6 +213,29 @@ class DatabaseManager:
                     logger.error(f"Error auto-migrating version {row['id']}: {e}")
                     
             logger.info("Legacy dates migrated successfully.")
+
+    def _auto_sanitize_special_data(self) -> None:
+        """Εξασφάλιση ότι το special_data είναι καθαρό JSON object και όχι double-encoded string"""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT id, special_data FROM contracts WHERE special_data IS NOT NULL")
+                rows = cursor.fetchall()
+                for row in rows:
+                    raw = row['special_data']
+                    if raw and isinstance(raw, str):
+                        try:
+                            parsed = json.loads(raw)
+                            if isinstance(parsed, str):
+                                while isinstance(parsed, str):
+                                    parsed = json.loads(parsed)
+                                if isinstance(parsed, dict):
+                                    clean_json = json.dumps(parsed, ensure_ascii=False)
+                                    cursor.execute("UPDATE contracts SET special_data=? WHERE id=?", (clean_json, row['id']))
+                        except Exception:
+                            pass
+        except Exception as e:
+            logger.warning(f"Warning during special_data sanitization: {e}")
     
     def get_all_contracts(self) -> List[Dict[str, Any]]:
         """Λήψη όλων των συμβάσεων"""
@@ -245,6 +269,21 @@ class DatabaseManager:
 
         contract['pdf_paths'] = pdf_list
 
+        # Καθαρισμός special_data ώστε να είναι πάντα έγκυρο JSON string
+        raw_special = contract.get('special_data')
+        if isinstance(raw_special, str) and raw_special.strip():
+            try:
+                parsed = json.loads(raw_special)
+                while isinstance(parsed, str):
+                    parsed = json.loads(parsed)
+                contract['special_data'] = json.dumps(parsed, ensure_ascii=False) if isinstance(parsed, dict) else "{}"
+            except Exception:
+                contract['special_data'] = "{}"
+        elif isinstance(raw_special, dict):
+            contract['special_data'] = json.dumps(raw_special, ensure_ascii=False)
+        else:
+            contract['special_data'] = "{}"
+
         return contract
     
     def get_contract_by_id(self, contract_id: str) -> Optional[Dict[str, Any]]:
@@ -261,7 +300,19 @@ class DatabaseManager:
             cursor = conn.cursor()
             
             # Μετατροπή special_data σε JSON string
-            special_data_json = json.dumps(contract_data.get('special_data', {}), ensure_ascii=False)
+            special_data = contract_data.get('special_data', {})
+            if isinstance(special_data, dict):
+                special_data_json = json.dumps(special_data, ensure_ascii=False)
+            elif isinstance(special_data, str) and special_data.strip():
+                try:
+                    parsed = json.loads(special_data)
+                    while isinstance(parsed, str):
+                        parsed = json.loads(parsed)
+                    special_data_json = json.dumps(parsed, ensure_ascii=False) if isinstance(parsed, dict) else "{}"
+                except Exception:
+                    special_data_json = "{}"
+            else:
+                special_data_json = "{}"
             
             # Μετατροπή pdf_paths σε JSON string
             pdf_paths = contract_data.get('pdf_paths', [])
@@ -296,7 +347,19 @@ class DatabaseManager:
             cursor = conn.cursor()
             
             # Μετατροπή special_data σε JSON string
-            special_data_json = json.dumps(contract_data.get('special_data', {}), ensure_ascii=False)
+            special_data = contract_data.get('special_data', {})
+            if isinstance(special_data, dict):
+                special_data_json = json.dumps(special_data, ensure_ascii=False)
+            elif isinstance(special_data, str) and special_data.strip():
+                try:
+                    parsed = json.loads(special_data)
+                    while isinstance(parsed, str):
+                        parsed = json.loads(parsed)
+                    special_data_json = json.dumps(parsed, ensure_ascii=False) if isinstance(parsed, dict) else "{}"
+                except Exception:
+                    special_data_json = "{}"
+            else:
+                special_data_json = "{}"
             
             # Μετατροπή pdf_paths σε JSON string
             pdf_paths = contract_data.get('pdf_paths', [])

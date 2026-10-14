@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 from constants import DB_FILE, SETTINGS_FILE, PDF_FOLDER, BACKUP_FOLDER, COLOR_THEMES, SPECIAL_FIELD_TRANSLATIONS, APP_VERSION
 from utils import create_backup, get_contract_status, get_resource_path
 from database import DatabaseManager
-from ui_forms import ContractFormToplevel, AdvancedSearchToplevel, CategoryManagerWindow
+from ui_forms import ContractFormToplevel, AdvancedSearchToplevel, CategoryManagerWindow, ContractRenewToplevel
 from dashboard_view import DashboardView
 from contract_list_view import ContractListView
 from signals import SignalManager, Signals
@@ -367,6 +367,16 @@ class ContractApp(ctk.CTk):
     def edit_contract(self, contract: Dict[str, Any]):
         self._open_contract_form(contract)
 
+    def renew_contract(self, contract: Dict[str, Any]):
+        """Άνοιγμα διαλόγου γρήγορης ανανέωσης / παράτασης σύμβασης (1-Click Renew)"""
+        try:
+            ContractRenewToplevel(self, self.db_manager, contract, self.current_theme)
+        except Exception as e:
+            logger.error(f"Σφάλμα κατά την ανανέωση σύμβασης: {e}", exc_info=True)
+            self.lift()
+            self.focus_force()
+            messagebox.showerror("Σφάλμα", f"Αποτυχία ανοίγματος φόρμας ανανέωσης:\n\n{str(e)}", parent=self)
+
     def setup_right_area(self):
         search_filter_frame = ctk.CTkFrame(self.right_container, fg_color="transparent")
         search_filter_frame.pack(fill="x", pady=(0, 10))
@@ -399,7 +409,8 @@ class ContractApp(ctk.CTk):
         callbacks = {
             'edit_contract': self.edit_contract,
             'delete_contract': self.delete_contract,
-            'open_pdf': self.open_pdf
+            'open_pdf': self.open_pdf,
+            'renew_contract': self.renew_contract
         }
         self.contract_list_view = ContractListView(self.right_container, 
                                                  callbacks=callbacks,
@@ -914,6 +925,12 @@ class ContractApp(ctk.CTk):
             # Buttons
             btn_frame = ctk.CTkFrame(content, fg_color="transparent")
             btn_frame.pack(fill="x", pady=(5, 0))
+            
+            if get_contract_status(contract.get('expiry_date')) == "EXPIRED":
+                ctk.CTkButton(btn_frame, text="🔄 Ανανέωση", height=28, width=100, 
+                             fg_color=self.theme_colors["accent"],
+                             hover_color="#219150" if self.theme_colors.get("accent") != "#219150" else "#1b7943",
+                             command=lambda c=contract: self.renew_contract(c)).pack(side="left", padx=(0, 5))
             
             ctk.CTkButton(btn_frame, text="✎ Επεξεργασία", height=28, width=100, 
                          fg_color=self.theme_colors["secondary"],

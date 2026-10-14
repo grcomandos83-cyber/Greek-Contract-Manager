@@ -9,12 +9,16 @@ import uuid
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 from typing import List, Dict, Any, Optional
+import logging
+
+logger = logging.getLogger(__name__)
 
 from constants import COLOR_THEMES, PDF_FOLDER, SETTINGS_FILE, SPECIAL_FIELD_TRANSLATIONS
-from utils import validate_date, calculate_expiry_date, get_resource_path
+from utils import validate_date, calculate_expiry_date, get_resource_path, get_contract_status
 from signals import SignalManager, Signals
 from contract_versions_view import ContractVersionsWindow
 from mixins import MessageBoxMixin
+from notification_system import show_notification
 
 # =========================================================================
 # === ΚΛΑΣΗ: ΔΙΑΧΕΙΡΙΣΗ ΚΑΤΗΓΟΡΙΩΝ (ΝΕΟ) ===
@@ -359,13 +363,19 @@ class ContractFormToplevel(MessageBoxMixin, ctk.CTkToplevel):
         special_data_str = contract.get('special_data', '{}')
         if special_data_str:
             try:
-                special_data = json.loads(special_data_str)
-                for key, value in special_data.items():
-                    if key in self.special_fields:
-                        widget = self.special_fields[key]
-                        if isinstance(widget, ctk.CTkEntry):
-                            widget.insert(0, value)
-            except json.JSONDecodeError:
+                special_data = json.loads(special_data_str) if isinstance(special_data_str, str) else special_data_str
+                while isinstance(special_data, str):
+                    try:
+                        special_data = json.loads(special_data)
+                    except Exception:
+                        break
+                if isinstance(special_data, dict):
+                    for key, value in special_data.items():
+                        if key in self.special_fields:
+                            widget = self.special_fields[key]
+                            if isinstance(widget, ctk.CTkEntry):
+                                widget.insert(0, value)
+            except Exception:
                 pass
 
     def show_dynamic_fields(self, choice: str) -> None:
@@ -962,9 +972,17 @@ class AdvancedSearchToplevel(MessageBoxMixin, ctk.CTkToplevel):
                 text_color="#e74c3c"
             ).pack(side="left", padx=4)
         
+        if get_contract_status(contract.get('expiry_date')) == "EXPIRED":
+            ctk.CTkButton(action_frame, text="🔄 Ανανέωση", width=85,
+                          fg_color="#2fa572", hover_color="#219150",
+                          command=lambda c=contract: self.renew_contract(c)).pack(side="left", padx=2)
+        
         ctk.CTkButton(action_frame, text="👁️ Προβολή", width=80,
                       command=lambda c=contract: self.view_contract(c)).pack(side="left", padx=2)
     
+    def renew_contract(self, contract: Dict[str, Any]) -> None:
+        self.master.renew_contract(contract)
+
     def edit_contract(self, contract: Dict[str, Any]) -> None:
         self.master.edit_contract(contract)
         # The main app handles refreshing via signals when the edit form is saved.
@@ -1006,8 +1024,13 @@ class AdvancedSearchToplevel(MessageBoxMixin, ctk.CTkToplevel):
         special_data_str = contract.get('special_data', '{}')
         if special_data_str:
             try:
-                special_data = json.loads(special_data_str)
-                if special_data:
+                special_data = json.loads(special_data_str) if isinstance(special_data_str, str) else special_data_str
+                while isinstance(special_data, str):
+                    try:
+                        special_data = json.loads(special_data)
+                    except Exception:
+                        break
+                if isinstance(special_data, dict) and special_data:
                     ctk.CTkLabel(main_frame, text="Ειδικά Πεδία:", font=("Roboto", 12, "bold")).pack(anchor="w", pady=(10, 5))
                     for key, value in special_data.items():
                         if value:
@@ -1016,7 +1039,7 @@ class AdvancedSearchToplevel(MessageBoxMixin, ctk.CTkToplevel):
                             row.pack(fill="x", pady=2)
                             ctk.CTkLabel(row, text=greek_key, font=("Roboto", 11), width=150, anchor="w").pack(side="left")
                             ctk.CTkLabel(row, text=str(value), font=("Roboto", 11)).pack(side="left")
-            except json.JSONDecodeError:
+            except Exception:
                 pass
     
     def open_pdf(self, path: str) -> None:
@@ -1042,3 +1065,545 @@ class AdvancedSearchToplevel(MessageBoxMixin, ctk.CTkToplevel):
                     message=f"Αποτυχία ανοίγματος PDF:\n{str(e2)}",
                     parent=self
                 )
+
+
+# =========================================================================
+# === ΚΛΑΣΗ: ΓΡΗΓΟΡΗ ΑΝΑΝΕΩΣΗ / ΠΑΡΑΤΑΣΗ ΣΥΜΒΑΣΗΣ (1-CLICK RENEW) ===
+# =========================================================================
+
+class ContractRenewToplevel(MessageBoxMixin, ctk.CTkToplevel):
+    """
+    Παράθυρο Γρήγορης Ανανέωσης / Παράτασης Σύμβασης (1-Click Renew)
+    
+    Επιτρέπει την άμεση ανανέωση σύμβασης για 12, 24 ή προσαρμοσμένους μήνες,
+    θέτοντας αυτόματα ως νέα έναρξη την ημερομηνία λήξης της προηγούμενης
+    (για συνεχή κάλυψη) ή τη σημερινή ημερομηνία, αρχειοθετώντας ταυτόχρονα
+    την τρέχουσα κατάσταση στο ιστορικό εκδόσεων (contract_versions).
+    """
+    def __init__(self, master: Any, db_manager: Any, contract: Dict[str, Any], current_theme: str = "Minimalist"):
+        super().__init__(master)
+        
+        try:
+            self.iconbitmap(get_resource_path(os.path.join("assets", "app.ico")))
+        except Exception:
+            pass
+            
+        self.master = master
+        self.db_manager = db_manager
+        self.contract = contract
+        self.current_theme = current_theme or "Minimalist"
+        self.theme_colors = COLOR_THEMES.get(self.current_theme, COLOR_THEMES["Minimalist"])
+        
+        provider = contract.get('provider', 'Σύμβαση')
+        self.title(f"Ανανέωση Σύμβασης - {provider}")
+        
+        self.width = 520
+        self.height = 680
+        
+        screen_width = self.winfo_screenwidth()
+        screen_height = self.winfo_screenheight()
+        x = (screen_width // 2) - (self.width // 2)
+        y = (screen_height // 2) - (self.height // 2)
+        self.geometry(f"{self.width}x{self.height}+{x}+{y}")
+        
+        self.transient(master)
+        self.grab_set()
+        self.attributes("-topmost", True)
+        
+        # Προαιρετικό νέο PDF
+        self.new_pdf_path: Optional[str] = None
+        
+        self._setup_ui()
+        self.bind("<Escape>", lambda e: self.destroy())
+
+    def _setup_ui(self) -> None:
+        # Header banner
+        header_frame = ctk.CTkFrame(self, fg_color=self.theme_colors["accent"], corner_radius=0)
+        header_frame.pack(fill="x", padx=0, pady=0)
+        
+        ctk.CTkLabel(
+            header_frame,
+            text="🔄 Γρήγορη Ανανέωση / Παράταση Σύμβασης",
+            font=("Roboto", 16, "bold"),
+            text_color="white"
+        ).pack(pady=12, padx=15, anchor="w")
+        
+        # Main scrollable frame
+        main_scroll = ctk.CTkScrollableFrame(self, fg_color="transparent")
+        main_scroll.pack(fill="both", expand=True, padx=15, pady=(10, 5))
+        
+        # 1. Summary Card τρέχουσας σύμβασης
+        provider = self.contract.get('provider', '')
+        c_type = self.contract.get('type', '')
+        number = self.contract.get('number', '')
+        old_date = self.contract.get('date', 'N/A')
+        old_expiry = self.contract.get('expiry_date', 'N/A')
+        old_months = str(self.contract.get('months', '12'))
+        
+        summary_frame = ctk.CTkFrame(main_scroll, fg_color=("gray90", "#2b2b2b"), corner_radius=8,
+                                     border_width=1, border_color=("gray80", "#3a3a3a"))
+        summary_frame.pack(fill="x", pady=(0, 15))
+        
+        top_row = ctk.CTkFrame(summary_frame, fg_color="transparent")
+        top_row.pack(fill="x", padx=12, pady=(10, 4))
+        
+        ctk.CTkLabel(
+            top_row,
+            text=f"{provider} ({c_type})",
+            font=("Roboto", 15, "bold"),
+            text_color=self.theme_colors["primary"]
+        ).pack(side="left")
+        
+        status = get_contract_status(old_expiry)
+        if status == "EXPIRED":
+            st_text, st_col = "ΕΛΗΞΕ", self.theme_colors["danger"]
+        elif status == "EXPIRING_SOON":
+            st_text, st_col = "ΠΡΟΣ ΛΗΞΗ", self.theme_colors["warning"]
+        elif status == "ACTIVE":
+            st_text, st_col = "ΕΝΕΡΓΗ", self.theme_colors["accent"]
+        else:
+            st_text, st_col = "ΧΩΡΙΣ ΛΗΞΗ", "gray"
+            
+        ctk.CTkLabel(
+            top_row,
+            text=f" {st_text} ",
+            font=("Roboto", 11, "bold"),
+            text_color="white",
+            fg_color=st_col,
+            corner_radius=4
+        ).pack(side="right")
+        
+        info_text = f"Αρ. Σύμβασης: {number}  |  Τρέχουσα Έναρξη: {old_date}  |  Λήξη: {old_expiry}"
+        ctk.CTkLabel(
+            summary_frame,
+            text=info_text,
+            font=("Roboto", 12),
+            text_color=("gray30", "gray80")
+        ).pack(anchor="w", padx=12, pady=(0, 10))
+        
+        # 2. Νέα Ημερομηνία Έναρξης
+        sec1 = ctk.CTkFrame(main_scroll, fg_color="transparent")
+        sec1.pack(fill="x", pady=(0, 12))
+        
+        ctk.CTkLabel(sec1, text="1. Νέα Ημερομηνία Έναρξης:", font=("Roboto", 13, "bold")).pack(anchor="w", pady=(0, 5))
+        
+        today_str = datetime.now().strftime('%d/%m/%Y')
+        has_valid_old_expiry = validate_date(old_expiry)
+        
+        preset_date_frame = ctk.CTkFrame(sec1, fg_color="transparent")
+        preset_date_frame.pack(fill="x", pady=(0, 6))
+        
+        if has_valid_old_expiry:
+            ctk.CTkButton(
+                preset_date_frame,
+                text=f"📅 Από παλιά λήξη ({old_expiry})",
+                font=("Roboto", 11),
+                fg_color=self.theme_colors["secondary"],
+                hover_color=self.theme_colors["primary"],
+                height=28,
+                command=lambda: self._set_start_date(old_expiry)
+            ).pack(side="left", padx=(0, 6))
+        
+        ctk.CTkButton(
+            preset_date_frame,
+            text=f"📅 Από σήμερα ({today_str})",
+            font=("Roboto", 11),
+            fg_color="#555",
+            hover_color="#444",
+            height=28,
+            command=lambda: self._set_start_date(today_str)
+        ).pack(side="left")
+        
+        date_row = ctk.CTkFrame(sec1, fg_color="transparent")
+        date_row.pack(fill="x", pady=(4, 0))
+        ctk.CTkLabel(date_row, text="Επιλογή Ημερομηνίας:", width=160, anchor="w").pack(side="left")
+        
+        self.entry_date = DateEntry(
+            date_row,
+            date_pattern='dd/mm/yyyy',
+            width=12,
+            background=self.theme_colors['primary'],
+            foreground='white',
+            borderwidth=2,
+            font=("Roboto", 12)
+        )
+        self.entry_date.pack(side="right", fill="x", expand=True)
+        
+        # Έξυπνη προεπιλογή ημερομηνίας
+        default_start = old_expiry if has_valid_old_expiry else today_str
+        try:
+            d = datetime.strptime(default_start, '%d/%m/%Y').date()
+            self.entry_date.set_date(d)
+        except Exception:
+            self.entry_date.set_date(datetime.now().date())
+            
+        self.entry_date.bind("<<DateEntrySelected>>", lambda e: self._update_preview())
+        
+        # 3. Νέα Διάρκεια (Μήνες)
+        sec2 = ctk.CTkFrame(main_scroll, fg_color="transparent")
+        sec2.pack(fill="x", pady=(5, 12))
+        
+        ctk.CTkLabel(sec2, text="2. Νέα Διάρκεια (Μήνες):", font=("Roboto", 13, "bold")).pack(anchor="w", pady=(0, 5))
+        
+        months_btn_frame = ctk.CTkFrame(sec2, fg_color="transparent")
+        months_btn_frame.pack(fill="x", pady=(0, 6))
+        
+        ctk.CTkButton(
+            months_btn_frame,
+            text="12 Μήνες (1 έτος)",
+            width=120,
+            height=28,
+            fg_color=self.theme_colors["primary"],
+            font=("Roboto", 11, "bold"),
+            command=lambda: self._set_months(12)
+        ).pack(side="left", padx=(0, 6))
+        
+        ctk.CTkButton(
+            months_btn_frame,
+            text="24 Μήνες (2 έτη)",
+            width=120,
+            height=28,
+            fg_color=self.theme_colors["primary"],
+            font=("Roboto", 11, "bold"),
+            command=lambda: self._set_months(24)
+        ).pack(side="left", padx=(0, 6))
+        
+        if old_months.isdigit() and int(old_months) > 0 and int(old_months) not in (12, 24):
+            ctk.CTkButton(
+                months_btn_frame,
+                text=f"Ίδια ({old_months} μ.)",
+                width=100,
+                height=28,
+                fg_color="#555",
+                hover_color="#444",
+                font=("Roboto", 11),
+                command=lambda: self._set_months(int(old_months))
+            ).pack(side="left")
+        else:
+            ctk.CTkButton(
+                months_btn_frame,
+                text="36 Μήνες",
+                width=90,
+                height=28,
+                fg_color="#555",
+                hover_color="#444",
+                font=("Roboto", 11),
+                command=lambda: self._set_months(36)
+            ).pack(side="left")
+            
+        custom_months_row = ctk.CTkFrame(sec2, fg_color="transparent")
+        custom_months_row.pack(fill="x", pady=(4, 0))
+        ctk.CTkLabel(custom_months_row, text="Μήνες (προσαρμογή):", width=160, anchor="w").pack(side="left")
+        
+        self.entry_months = ctk.CTkEntry(custom_months_row, placeholder_text="π.χ. 12")
+        self.entry_months.pack(side="right", fill="x", expand=True)
+        
+        default_m = old_months if (old_months.isdigit() and int(old_months) > 0) else "12"
+        self.entry_months.insert(0, default_m)
+        self.entry_months.bind("<KeyRelease>", lambda e: self._update_preview())
+        
+        # 4. Ζωντανή Προεπισκόπηση Νέας Λήξης
+        self.preview_card = ctk.CTkFrame(
+            main_scroll,
+            fg_color=("white", "#1e272e"),
+            border_width=2,
+            border_color=self.theme_colors["accent"],
+            corner_radius=10
+        )
+        self.preview_card.pack(fill="x", pady=(5, 15), padx=2)
+        
+        self.lbl_preview_expiry = ctk.CTkLabel(
+            self.preview_card,
+            text="",
+            font=("Roboto", 16, "bold"),
+            text_color=self.theme_colors["accent"]
+        )
+        self.lbl_preview_expiry.pack(pady=(10, 2), padx=10)
+        
+        self.lbl_preview_sub = ctk.CTkLabel(
+            self.preview_card,
+            text="",
+            font=("Roboto", 12),
+            text_color=("gray30", "gray80")
+        )
+        self.lbl_preview_sub.pack(pady=(0, 10), padx=10)
+        
+        # 5. Προαιρετικά Στοιχεία (Αριθμός & Νέο PDF)
+        sec3 = ctk.CTkFrame(main_scroll, fg_color="transparent")
+        sec3.pack(fill="x", pady=(0, 10))
+        
+        num_row = ctk.CTkFrame(sec3, fg_color="transparent")
+        num_row.pack(fill="x", pady=2)
+        ctk.CTkLabel(num_row, text="Αρ. Σύμβασης / Παραρτήματος:", width=180, anchor="w", font=("Roboto", 12)).pack(side="left")
+        self.entry_number = ctk.CTkEntry(num_row)
+        self.entry_number.pack(side="right", fill="x", expand=True)
+        self.entry_number.insert(0, number)
+        
+        pdf_row = ctk.CTkFrame(sec3, fg_color="transparent")
+        pdf_row.pack(fill="x", pady=(6, 2))
+        ctk.CTkLabel(pdf_row, text="Νέο PDF Ανανέωσης:", width=180, anchor="w", font=("Roboto", 12)).pack(side="left")
+        
+        self.btn_select_pdf = ctk.CTkButton(
+            pdf_row,
+            text="📎 Προσθήκη PDF...",
+            width=140,
+            height=26,
+            font=("Roboto", 11),
+            fg_color="#555",
+            hover_color="#444",
+            command=self._select_renewal_pdf
+        )
+        self.btn_select_pdf.pack(side="left", padx=(0, 6))
+        
+        self.lbl_pdf_name = ctk.CTkLabel(pdf_row, text="", font=("Roboto", 11, "italic"), text_color="gray")
+        self.lbl_pdf_name.pack(side="left", fill="x", expand=True)
+        
+        self.btn_remove_pdf = ctk.CTkButton(
+            pdf_row,
+            text="✖",
+            width=24,
+            height=24,
+            fg_color="#d9534f",
+            hover_color="#c0392b",
+            command=self._remove_renewal_pdf
+        )
+        
+        # 6. Αυτόματη Σημείωση στα Σχόλια
+        sec4 = ctk.CTkFrame(main_scroll, fg_color="transparent")
+        sec4.pack(fill="x", pady=(0, 10))
+        
+        self.var_add_note = ctk.BooleanVar(value=True)
+        cb = ctk.CTkCheckBox(
+            sec4,
+            text="Αυτόματη καταγραφή ανανέωσης στα σχόλια",
+            variable=self.var_add_note,
+            font=("Roboto", 12)
+        )
+        cb.pack(anchor="w", pady=(0, 4))
+        
+        self.lbl_note_preview = ctk.CTkLabel(
+            sec4,
+            text="",
+            font=("Roboto", 11, "italic"),
+            text_color=("gray40", "gray70"),
+            anchor="w"
+        )
+        self.lbl_note_preview.pack(fill="x", padx=25)
+        
+        # Action Buttons (Κάτω μπάρα)
+        btn_bar = ctk.CTkFrame(self, fg_color=("gray95", "#202020"), corner_radius=0)
+        btn_bar.pack(fill="x", side="bottom", padx=0, pady=0)
+        
+        btn_container = ctk.CTkFrame(btn_bar, fg_color="transparent")
+        btn_container.pack(fill="x", padx=15, pady=12)
+        
+        self.btn_confirm = ctk.CTkButton(
+            btn_container,
+            text="🔄 Επιβεβαίωση Ανανέωσης",
+            font=("Roboto", 13, "bold"),
+            height=38,
+            fg_color=self.theme_colors["accent"],
+            hover_color="#219150" if self.theme_colors["accent"] != "#219150" else "#1b7943",
+            command=self._confirm_renewal
+        )
+        self.btn_confirm.pack(side="left", fill="x", expand=True, padx=(0, 10))
+        
+        ctk.CTkButton(
+            btn_container,
+            text="✕ Ακύρωση",
+            font=("Roboto", 13),
+            height=38,
+            fg_color="transparent",
+            border_width=1,
+            border_color=self.theme_colors["danger"],
+            text_color=self.theme_colors["danger"],
+            hover_color=self.theme_colors["light_danger"],
+            width=100,
+            command=self.destroy
+        ).pack(side="right")
+        
+        # Αρχικός υπολογισμός προεπισκόπησης
+        self._update_preview()
+        
+        # Εστίαση στο κουμπί επιβεβαίωσης ώστε να εκτελείται με Enter!
+        self.btn_confirm.focus()
+        self.bind("<Return>", lambda e: self._confirm_renewal())
+
+    def _set_start_date(self, date_str: str) -> None:
+        try:
+            d = datetime.strptime(date_str, '%d/%m/%Y').date()
+            self.entry_date.set_date(d)
+            self._update_preview()
+        except Exception:
+            pass
+
+    def _set_months(self, months: int) -> None:
+        self.entry_months.delete(0, 'end')
+        self.entry_months.insert(0, str(months))
+        self._update_preview()
+
+    def _update_preview(self) -> None:
+        start_date = self.entry_date.get()
+        months_str = self.entry_months.get().strip()
+        
+        if not validate_date(start_date):
+            self.lbl_preview_expiry.configure(text="❌ Μη έγκυρη ημερομηνία έναρξης", text_color="#e74c3c")
+            self.lbl_preview_sub.configure(text="")
+            return
+            
+        if not (months_str.isdigit() and int(months_str) > 0):
+            self.lbl_preview_expiry.configure(text="❌ Εισάγετε έγκυρους μήνες (> 0)", text_color="#e74c3c")
+            self.lbl_preview_sub.configure(text="")
+            return
+            
+        months = int(months_str)
+        new_expiry = calculate_expiry_date(start_date, months)
+        if new_expiry:
+            self.lbl_preview_expiry.configure(
+                text=f"📅 Νέα Ημερομηνία Λήξης: {new_expiry}",
+                text_color=self.theme_colors["accent"]
+            )
+            self.lbl_preview_sub.configure(
+                text=f"Νέα Περίοδος: {start_date}  ➜  {new_expiry}  ({months} μήνες)",
+                text_color=("gray20", "gray80")
+            )
+            if hasattr(self, 'lbl_note_preview'):
+                today_s = datetime.now().strftime('%d/%m/%Y')
+                self.lbl_note_preview.configure(
+                    text=f"Σημείωση: [Ανανέωση {today_s}: {months} μήνες (έως {new_expiry})]"
+                )
+        else:
+            self.lbl_preview_expiry.configure(text="❌ Σφάλμα υπολογισμού", text_color="#e74c3c")
+            self.lbl_preview_sub.configure(text="")
+
+    def _select_renewal_pdf(self) -> None:
+        self.attributes("-topmost", False)
+        self.grab_release()
+        filename = filedialog.askopenfilename(
+            parent=self.master,
+            filetypes=[("PDF files", "*.pdf")]
+        )
+        self.grab_set()
+        self.attributes("-topmost", True)
+        
+        if filename:
+            self.new_pdf_path = filename
+            base = os.path.basename(filename)
+            display_name = base if len(base) <= 25 else base[:22] + "..."
+            self.lbl_pdf_name.configure(text=f"📄 {display_name}")
+            self.btn_remove_pdf.pack(side="left", padx=4)
+
+    def _remove_renewal_pdf(self) -> None:
+        self.new_pdf_path = None
+        self.lbl_pdf_name.configure(text="")
+        self.btn_remove_pdf.pack_forget()
+
+    def _confirm_renewal(self) -> None:
+        start_date = self.entry_date.get()
+        months_str = self.entry_months.get().strip()
+        
+        if not validate_date(start_date):
+            self._show_messagebox("error", "Σφάλμα Ημερομηνίας",
+                                 "Παρακαλώ εισάγετε έγκυρη Ημερομηνία Έναρξης (DD/MM/YYYY).")
+            return
+            
+        if not (months_str.isdigit() and int(months_str) > 0):
+            self._show_messagebox("error", "Σφάλμα Διάρκειας",
+                                 "Η διάρκεια πρέπει να είναι θετικός ακέραιος αριθμός μηνών (π.χ. 12, 24).")
+            return
+            
+        months = int(months_str)
+        new_expiry = calculate_expiry_date(start_date, months)
+        if not new_expiry:
+            self._show_messagebox("error", "Σφάλμα Υπολογισμού",
+                                 "Δεν ήταν δυνατός ο υπολογισμός της νέας ημερομηνίας λήξης.")
+            return
+            
+        # 1. Ανάκτηση τρέχουσας κατάστασης από τη βάση
+        fresh_contract = self.db_manager.get_contract_by_id(self.contract['id'])
+        contract_to_archive = fresh_contract if fresh_contract else self.contract
+        
+        # 2. Αρχειοθέτηση της τρέχουσας σύμβασης στο ιστορικό εκδόσεων (Contract Versions)
+        version_desc = f"Ανανέωση σύμβασης: Νέα έναρξη {start_date}, διάρκεια {months} μήνες (νέα λήξη: {new_expiry})"
+        try:
+            self.db_manager.create_contract_version(
+                contract_to_archive,
+                version_desc,
+                "User (Ανανέωση)"
+            )
+        except Exception as ver_err:
+            logger.warning(f"Αδυναμία δημιουργίας έκδοσης για σύμβαση {self.contract['id']}: {ver_err}")
+            
+        # 3. Αντιγραφή νέου PDF αν επιλέχθηκε
+        new_pdf_dest = None
+        if self.new_pdf_path and os.path.exists(self.new_pdf_path):
+            try:
+                if not os.path.exists(PDF_FOLDER):
+                    os.makedirs(PDF_FOLDER)
+                file_name = os.path.basename(self.new_pdf_path)
+                timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+                new_pdf_dest = os.path.join(PDF_FOLDER, f"{timestamp}_renew_{file_name}")
+                shutil.copy(self.new_pdf_path, new_pdf_dest)
+            except Exception as pdf_err:
+                logger.error(f"Σφάλμα αντιγραφής νέου PDF: {pdf_err}")
+                
+        # 4. Προετοιμασία ανανεωμένης σύμβασης
+        updated_contract = dict(contract_to_archive)
+        updated_contract['date'] = start_date
+        updated_contract['months'] = str(months)
+        updated_contract['expiry_date'] = new_expiry
+        
+        # Καθαρισμός special_data ώστε να είναι dictionary
+        raw_special = contract_to_archive.get('special_data')
+        if isinstance(raw_special, dict):
+            updated_contract['special_data'] = raw_special
+        elif isinstance(raw_special, str) and raw_special.strip():
+            try:
+                parsed_s = json.loads(raw_special)
+                while isinstance(parsed_s, str):
+                    parsed_s = json.loads(parsed_s)
+                updated_contract['special_data'] = parsed_s if isinstance(parsed_s, dict) else {}
+            except Exception:
+                updated_contract['special_data'] = {}
+        else:
+            updated_contract['special_data'] = {}
+        
+        new_num = self.entry_number.get().strip()
+        if new_num:
+            updated_contract['number'] = new_num
+            
+        if new_pdf_dest:
+            current_pdfs = list(updated_contract.get('pdf_paths', []))
+            if new_pdf_dest not in current_pdfs:
+                current_pdfs.append(new_pdf_dest)
+            updated_contract['pdf_paths'] = current_pdfs
+            if not updated_contract.get('pdf_path'):
+                updated_contract['pdf_path'] = new_pdf_dest
+                
+        if self.var_add_note.get():
+            today_note_date = datetime.now().strftime('%d/%m/%Y')
+            auto_note = f"[Ανανέωση {today_note_date}: {months} μήνες (έως {new_expiry})]"
+            old_comm = (updated_contract.get('comments') or '').strip()
+            updated_contract['comments'] = f"{old_comm}\n{auto_note}".strip() if old_comm else auto_note
+            
+        # 5. Ενημέρωση στη βάση δεδομένων
+        try:
+            self.db_manager.update_contract(updated_contract)
+        except Exception as db_err:
+            logger.error(f"Σφάλμα ενημέρωσης σύμβασης στη βάση: {db_err}", exc_info=True)
+            self._show_messagebox("error", "Σφάλμα Βάσης", f"Αποτυχία ενημέρωσης σύμβασης:\n\n{str(db_err)}")
+            return
+            
+        # 6. Εκπομπή σήματος για live UI & Dashboard refresh
+        SignalManager.emit(Signals.CONTRACT_UPSERTED, updated_contract)
+        
+        # 7. Ειδοποίηση επιτυχίας
+        provider_name = updated_contract.get('provider', 'Η σύμβαση')
+        show_notification(
+            f"Η σύμβαση '{provider_name}' ανανεώθηκε επιτυχώς έως {new_expiry}!\nΗ προηγούμενη κατάσταση αποθηκεύτηκε στο ιστορικό εκδόσεων.",
+            "success"
+        )
+        
+        # 8. Κλείσιμο παραθύρου
+        self.destroy()
+
