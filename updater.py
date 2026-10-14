@@ -109,8 +109,13 @@ def _download_and_apply(download_url, is_installer=True):
 
             clean_env = _get_clean_env()
 
+            # Clean os.environ in-place as well before spawning
+            for k in list(os.environ.keys()):
+                if k.upper().startswith('_MEI') or k.upper().startswith('_PYI'):
+                    os.environ.pop(k, None)
+
             subprocess.Popen(
-                [setup_exe, "/VERYSILENT", "/SUPPRESSMSGBOXES", "/CLOSEAPPLICATIONS", "/RESTARTAPPLICATIONS"],
+                [setup_exe, "/VERYSILENT", "/SUPPRESSMSGBOXES", "/CLOSEAPPLICATIONS"],
                 env=clean_env,
                 creationflags=flags,
                 close_fds=True
@@ -201,6 +206,14 @@ def _download_and_apply(download_url, is_installer=True):
         "    echo [%DATE% %TIME%] ERROR: exe missing before launch >> \"%LOG%\"\r\n"
         "    goto DONE\r\n"
         ")\r\n"
+        "\r\n"
+        "rem --- Clear PyInstaller temp variables before launch ---\r\n"
+        "set _MEIPASS2=\r\n"
+        "set _MEIPASS=\r\n"
+        "set _PYI_APPLICATION_HOME_DIR=\r\n"
+        "set _PYI_ARCHIVE_FILE=\r\n"
+        "set _PYI_SPLASH_IPC=\r\n"
+        "set PYINSTALLER_RESET_ENVIRONMENT=1\r\n"
         "\r\n"
         "rem --- Launch: 'start \"\" ...' with empty title, NOT explorer.exe ---\r\n"
         "echo [%DATE% %TIME%] Launching... >> \"%LOG%\"\r\n"

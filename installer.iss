@@ -31,7 +31,7 @@ Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern
 CloseApplications=yes
-RestartApplications=yes
+RestartApplications=no
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -41,6 +41,7 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 
 [Files]
 Source: "dist\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
+Source: "launcher.bat"; DestDir: "{app}"; Flags: ignoreversion
 Source: "assets\app.ico"; DestDir: "{app}\assets"; Flags: ignoreversion
 Source: "README.md"; DestDir: "{app}"; Flags: ignoreversion isreadme
 
@@ -49,26 +50,10 @@ Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFile
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon; IconFilename: "{app}\assets\app.ico"
 
 [Run]
-Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent; Check: ShouldLaunchInteractive
-Filename: "{app}\{#MyAppExeName}"; Flags: nowait; Check: ShouldLaunchSilent
+Filename: "{app}\launcher.bat"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: runhidden nowait postinstall skipifsilent; Check: ShouldLaunchInteractive
+Filename: "{app}\launcher.bat"; Flags: runhidden nowait; Check: ShouldLaunchSilent
 
 [Code]
-function SetEnvironmentVariable(lpName: string; lpValue: string): Boolean;
-external 'SetEnvironmentVariableW@kernel32.dll stdcall';
-
-procedure CurStepChanged(CurStep: TSetupStep);
-begin
-  if CurStep = ssPostInstall then
-  begin
-    try
-      SetEnvironmentVariable('_MEIPASS2', '');
-      SetEnvironmentVariable('_MEIPASS', '');
-      SetEnvironmentVariable('PYINSTALLER_RESET_ENVIRONMENT', '1');
-    except
-    end;
-  end;
-end;
-
 function ShouldLaunchSilent(): Boolean;
 begin
   Result := WizardSilent();

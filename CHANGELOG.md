@@ -1,5 +1,11 @@
 # Ιστορικό Εκδόσεων (Changelog)
 
+## [v1.0.21] - Οκτώβριος 2026
+- **Οριστική και Εγγυημένη Επίλυση Σφάλματος Python DLL:**
+  - Ενσωμάτωση του `launcher.bat` στον Inno Setup installer, ο οποίος εκτελείται αθόρυβα (`runhidden`) κατά την ολοκλήρωση της εγκατάστασης/ενημέρωσης και καθαρίζει εγγυημένα όλες τις μεταβλητές περιβάλλοντος του PyInstaller (`_MEIPASS`, `_MEIPASS2`, `_PYI_*`) πριν εκκινήσει το νέο `ContractManager.exe`.
+  - Απενεργοποίηση του Windows Restart Manager (`RestartApplications=no`) στον installer και αφαίρεση του `/RESTARTAPPLICATIONS` από το `updater.py`, αποτρέποντας την ανάκτηση του παλιού περιβάλλοντος διεργασίας από τα Windows.
+  - Προσθήκη καθαρισμού μεταβλητών περιβάλλοντος και στο `updater.bat` (fallback για portable .exe).
+
 ## [v1.0.20] - Οκτώβριος 2026
 - **Οριστική Εξάλειψη Σφάλματος Python DLL:** Καθαρισμός των μεταβλητών περιβάλλοντος του PyInstaller (`_MEIPASS`, `_MEIPASS2`) τόσο κατά την κλήση του εγκαταστάτη (`ContractManager_Setup.exe`) όσο και κατά την επανεκκίνηση της εφαρμογής από το Inno Setup.
 
