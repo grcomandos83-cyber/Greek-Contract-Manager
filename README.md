@@ -1,6 +1,7 @@
 # Οδηγός Χρήσης: Σύστημα Διαχείρισης Συμβάσεων (Contract Manager)
 
-[![Κατέβασμα για Windows](https://img.shields.io/badge/Κατέβασμα-για_Windows-blue?style=for-the-badge&logo=windows)](https://github.com/grcomandos83-cyber/Greek-Contract-Manager/releases/latest/download/ContractManager.exe)
+[![Κατέβασμα Εγκαταστάτη (Setup)](https://img.shields.io/badge/Κατέβασμα-Εγκαταστάτη_(Setup)-blue?style=for-the-badge&logo=windows)](https://github.com/grcomandos83-cyber/Greek-Contract-Manager/releases/latest/download/ContractManager_Setup.exe)
+[![Κατέβασμα Portable (.exe)](https://img.shields.io/badge/Κατέβασμα-Portable_(.exe)-gray?style=for-the-badge&logo=windows)](https://github.com/grcomandos83-cyber/Greek-Contract-Manager/releases/latest/download/ContractManager.exe)
 
 ![Στιγμιότυπο Εφαρμογής](screenshot.png)
 
@@ -47,11 +48,7 @@
 
 *Σας ευχόμαστε καλή και οργανωμένη δουλειά!*
 
-## Γνωστά Ζητήματα (Αυτόματη Ενημέρωση)
+## Αυτόματη Ενημέρωση (Auto-Update)
+Από την έκδοση **v1.0.18**, η εφαρμογή υποστηρίζει επίσημο **Εγκαταστάτη (Setup)**. Οι ενημερώσεις εκτελούνται αθόρυβα και αυτόματα στο παρασκήνιο χωρίς διακοπές ή σφάλματα.
 
-Κατά την διαδικασία της αυτόματης ενημέρωσης (Auto-Update), όταν το παλιό `.exe` αντικαθίσταται από το νέο, ενδέχεται να εμφανιστεί στιγμιαία το παρακάτω μήνυμα σφάλματος (`Failed to load Python DLL...`):
-
-![Σφάλμα κατά την Ενημέρωση](update_error.png)
-
-**Αυτό το μήνυμα είναι αβλαβές και δεν επηρεάζει τα δεδομένα ή την εφαρμογή σας.** 
-Η ενημέρωση (λήψη και αντικατάσταση του εκτελέσιμου) έχει ήδη ολοκληρωθεί επιτυχώς στο παρασκήνιο. Απλώς πατήστε **"OK"** στο παράθυρο σφάλματος και ανοίξτε ξανά την εφαρμογή. Η νέα έκδοση θα φορτώσει κανονικά!
+*(Σημείωση για παλαιότερες portable εκδόσεις: Αν κατά την ενημέρωση του παλιού `.exe` εμφανιζόταν μήνυμα `Failed to load Python DLL`, ήταν αβλαβές και λύνεται οριστικά με την εγκατάσταση μέσω του νέου `ContractManager_Setup.exe`).*

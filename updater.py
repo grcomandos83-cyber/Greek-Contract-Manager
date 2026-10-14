@@ -4,6 +4,7 @@ import os
 import sys
 import subprocess
 import threading
+import tempfile
 from tkinter import messagebox
 from constants import APP_VERSION, GITHUB_REPO
 
@@ -21,37 +22,77 @@ def check_for_updates(parent_window=None):
                 if latest_version and latest_version != APP_VERSION:
                     assets = data.get('assets', [])
                     download_url = None
+                    is_installer = False
+
+                    # Προτεραιότητα 1: Inno Setup Installer (ContractManager_Setup.exe)
                     for asset in assets:
-                        if asset.get('name', '').endswith('.exe'):
+                        name = asset.get('name', '').lower()
+                        if 'setup' in name and name.endswith('.exe'):
                             download_url = asset.get('browser_download_url')
+                            is_installer = True
                             break
 
+                    # Προτεραιότητα 2: Standalone .exe (π.χ. ContractManager.exe)
+                    if not download_url:
+                        for asset in assets:
+                            if asset.get('name', '').endswith('.exe'):
+                                download_url = asset.get('browser_download_url')
+                                is_installer = False
+                                break
+
                     if download_url:
-                        _prompt_update(parent_window, latest_version, download_url)
+                        _prompt_update(parent_window, latest_version, download_url, is_installer)
         except Exception as e:
             print(f"Update check failed: {e}")
 
     threading.Thread(target=_run_check, daemon=True).start()
 
 
-def _prompt_update(parent_window, new_version, download_url):
+def _prompt_update(parent_window, new_version, download_url, is_installer=True):
     """Ρωτάει τον χρήστη αν θέλει να κάνει ενημέρωση"""
     if parent_window:
         def ask():
             msg = (f"Υπάρχει διαθέσιμη μια νέα έκδοση ({new_version}).\n"
                    f"Θέλετε να την κατεβάσετε και να εγκατασταθεί αυτόματα;")
             if messagebox.askyesno("Ενημέρωση Διαθέσιμη", msg, parent=parent_window):
-                _download_and_apply(download_url)
+                _download_and_apply(download_url, is_installer)
         parent_window.after(0, ask)
 
 
-def _download_and_apply(download_url):
-    """Κατεβάζει το νέο .exe και δημιουργεί το script ενημέρωσης"""
+def _download_and_apply(download_url, is_installer=True):
+    """Κατεβάζει το νέο .exe και εφαρμόζει την ενημέρωση"""
     if not getattr(sys, 'frozen', False):
         messagebox.showinfo("Ενημέρωση", "Τρέχετε τον πηγαίο κώδικα (όχι .exe). Κάντε 'git pull' για ενημέρωση.")
         return
 
-    # --- ΑΙΤΙΑ #2: Πάντα χρησιμοποιούμε sys.executable & os.path.abspath ---
+    # --- Μέθοδος Inno Setup Installer: Ασφαλής, αθόρυβη & αξιόπιστη εκτέλεση ---
+    if is_installer:
+        temp_dir = tempfile.gettempdir()
+        setup_exe = os.path.join(temp_dir, f"ContractManager_Setup_{os.getpid()}.exe")
+
+        try:
+            urllib.request.urlretrieve(download_url, setup_exe)
+        except Exception as e:
+            messagebox.showerror("Σφάλμα Λήψης", f"Αποτυχία λήψης νέας έκδοσης:\n{e}")
+            return
+
+        try:
+            DETACHED_PROCESS = 0x00000008
+            flags = DETACHED_PROCESS
+            if hasattr(subprocess, 'CREATE_NO_WINDOW'):
+                flags |= subprocess.CREATE_NO_WINDOW
+
+            subprocess.Popen(
+                [setup_exe, "/VERYSILENT", "/SUPPRESSMSGBOXES", "/CLOSEAPPLICATIONS", "/RESTARTAPPLICATIONS"],
+                creationflags=flags,
+                close_fds=True
+            )
+            sys.exit(0)
+        except Exception as e:
+            messagebox.showerror("Σφάλμα Εγκατάστασης", f"Αποτυχία εκτέλεσης εγκαταστάτη:\n{e}")
+            return
+
+    # --- Fallback για Standalone .exe (αν δεν βρεθεί Installer) ---
     current_exe = os.path.abspath(sys.executable)
     exe_dir     = os.path.dirname(current_exe)
     exe_name    = os.path.basename(current_exe)
