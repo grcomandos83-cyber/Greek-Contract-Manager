@@ -53,6 +53,22 @@ Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChang
 Filename: "{app}\{#MyAppExeName}"; Flags: nowait; Check: ShouldLaunchSilent
 
 [Code]
+function SetEnvironmentVariable(lpName: string; lpValue: string): Boolean;
+external 'SetEnvironmentVariableW@kernel32.dll stdcall';
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep = ssPostInstall then
+  begin
+    try
+      SetEnvironmentVariable('_MEIPASS2', '');
+      SetEnvironmentVariable('_MEIPASS', '');
+      SetEnvironmentVariable('PYINSTALLER_RESET_ENVIRONMENT', '1');
+    except
+    end;
+  end;
+end;
+
 function ShouldLaunchSilent(): Boolean;
 begin
   Result := WizardSilent();

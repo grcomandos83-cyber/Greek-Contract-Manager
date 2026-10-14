@@ -48,6 +48,31 @@ def check_for_updates(parent_window=None):
     threading.Thread(target=_run_check, daemon=True).start()
 
 
+def _get_clean_env():
+    """Καθαρίζει το περιβάλλον από μεταβλητές του PyInstaller (_MEIPASS, _PYI_, PATH)
+    ώστε οι νέες διεργασίες (installer ή ανανεωμένο .exe) να μην προσπαθούν να φορτώσουν
+    DLLs από προσωρινούς φακέλους της τρέχουσας έκδοσης που θα διαγραφούν."""
+    clean_env = {}
+    for k, v in os.environ.items():
+        ku = k.upper()
+        if ku.startswith("_MEI") or ku.startswith("_PYI_"):
+            continue
+        clean_env[k] = v
+
+    clean_env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        norm_meipass = os.path.normcase(os.path.abspath(meipass))
+        path_parts = clean_env.get("PATH", "").split(os.pathsep)
+        filtered = [
+            p for p in path_parts
+            if not os.path.normcase(os.path.abspath(p)).startswith(norm_meipass)
+        ]
+        clean_env["PATH"] = os.pathsep.join(filtered)
+    return clean_env
+
+
 def _prompt_update(parent_window, new_version, download_url, is_installer=True):
     """Ρωτάει τον χρήστη αν θέλει να κάνει ενημέρωση"""
     if parent_window:
@@ -82,8 +107,11 @@ def _download_and_apply(download_url, is_installer=True):
             if hasattr(subprocess, 'CREATE_NO_WINDOW'):
                 flags |= subprocess.CREATE_NO_WINDOW
 
+            clean_env = _get_clean_env()
+
             subprocess.Popen(
                 [setup_exe, "/VERYSILENT", "/SUPPRESSMSGBOXES", "/CLOSEAPPLICATIONS", "/RESTARTAPPLICATIONS"],
+                env=clean_env,
                 creationflags=flags,
                 close_fds=True
             )
@@ -194,34 +222,7 @@ def _download_and_apply(download_url, is_installer=True):
         messagebox.showerror("Σφάλμα", f"Αποτυχία δημιουργίας script ενημέρωσης:\n{e}")
         return
 
-    # -------------------------------------------------------------------------
-    # Build a clean environment for the bat / new exe
-    # -------------------------------------------------------------------------
-    # FIX-B: Remove _MEIPASS / _MEIPASS2 / _PYI_* variables (case-insensitive).
-    # These point to the temp folder of the *current* frozen process. If the new
-    # exe inherits them it tries to load DLLs from a folder that no longer exists
-    # once the old process exits → "Failed to load Python DLL" crash.
-    env = {}
-    for k, v in os.environ.items():
-        ku = k.upper()
-        if ku.startswith("_MEI") or ku.startswith("_PYI_"):
-            continue
-        env[k] = v
-
-    # FIX-B: Tell PyInstaller 6.9+ to reset its internal state on next start
-    env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
-
-    # FIX-B: Remove any PATH entries that live inside the current _MEIPASS dir.
-    # Use normcase+abspath so that case and trailing-slash differences don't matter.
-    meipass = getattr(sys, "_MEIPASS", None)
-    if meipass:
-        norm_meipass = os.path.normcase(os.path.abspath(meipass))
-        path_parts = env.get("PATH", "").split(os.pathsep)
-        filtered = [
-            p for p in path_parts
-            if not os.path.normcase(os.path.abspath(p)).startswith(norm_meipass)
-        ]
-        env["PATH"] = os.pathsep.join(filtered)
+    env = _get_clean_env()
 
     # -------------------------------------------------------------------------
     # Launch the bat and exit
