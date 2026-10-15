@@ -6,7 +6,7 @@
 #define MyAppExeName "ContractManager.exe"
 
 #ifndef MyAppVersion
-#define MyAppVersion "1.0.22"
+#define MyAppVersion "1.0.23"
 #endif
 
 [Setup]
