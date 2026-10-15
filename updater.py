@@ -56,6 +56,9 @@ class UpdateProgressDialog(ctk.CTkToplevel):
         self.primary_color = theme_colors.get("primary", "#3B8ED0")
         self.accent_color = theme_colors.get("accent", "#2FA572")
 
+        # Κατασκευή UI στοιχείων πρώτα
+        self._build_ui()
+
         # Κεντράρισμα παραθύρου πάνω από το master
         self._center_window(master)
 
@@ -63,8 +66,10 @@ class UpdateProgressDialog(ctk.CTkToplevel):
             self.transient(master)
             self.grab_set()
 
-        self._build_ui()
-        
+        self.attributes("-topmost", True)
+        self.lift()
+        self.focus_force()
+
         self.protocol("WM_DELETE_WINDOW", self.cancel)
         self.bind("<Escape>", lambda e: self.cancel())
 
