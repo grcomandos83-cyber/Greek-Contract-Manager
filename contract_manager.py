@@ -86,6 +86,7 @@ class ContractApp(ctk.CTk):
         self.current_filtered_contracts: List[Dict[str, Any]] = []
         self._search_job: Optional[str] = None
         self.current_search_params: Dict[str, Any] = {}
+        self.current_status_filter: Optional[str] = None
         
         # Debounce & Performance Optimization
         self._last_search_time: float = 0
@@ -110,9 +111,8 @@ class ContractApp(ctk.CTk):
             'manage_categories': self.open_category_manager,
             'show_stats': self.show_statistics,
             'show_notifications': self.check_upcoming_expiries,
-            'advanced_search': self.open_advanced_search,
             'export_data': self.export_data,
-            'change_theme': self.open_theme_selector
+            'filter_status': self.filter_by_status
         }
         
         self.dashboard_view = DashboardView(
@@ -410,7 +410,9 @@ class ContractApp(ctk.CTk):
             'edit_contract': self.edit_contract,
             'delete_contract': self.delete_contract,
             'open_pdf': self.open_pdf,
-            'renew_contract': self.renew_contract
+            'renew_contract': self.renew_contract,
+            'new_contract': lambda: self._open_contract_form(None),
+            'clear_filters': self.clear_all_filters
         }
         self.contract_list_view = ContractListView(self.right_container, 
                                                  callbacks=callbacks,
@@ -424,11 +426,31 @@ class ContractApp(ctk.CTk):
             self.advanced_search_window = win
         elif win is not None:
             win.focus()
+
+    def filter_by_status(self, status: Optional[str]):
+        """Φιλτράρισμα της λίστας συμβάσεων βάσει κατάστασης (Interactive KPI cards)."""
+        self.current_status_filter = status
+        
+        status_labels = {
+            "ACTIVE": " - Ενεργές",
+            "EXPIRING_SOON": " - Λήγουν Σύντομα",
+            "EXPIRED": " - Ληγμένες"
+        }
+        suffix = status_labels.get(status, "")
+        if hasattr(self, 'contract_list_view'):
+            self.contract_list_view.set_title(f"Λίστα Συμβάσεων{suffix}")
+            
+        self.apply_filters()
     
     def clear_all_filters(self):
         self.entry_search.delete(0, 'end')
         self.combo_filter.set("Όλα")
         self.current_search_params = {}
+        self.current_status_filter = None
+        if hasattr(self, 'dashboard_view'):
+            self.dashboard_view.set_selected_status(None)
+        if hasattr(self, 'contract_list_view'):
+            self.contract_list_view.set_title("Λίστα Συμβάσεων")
         self.apply_filters()
         self.lift()
         self.focus_force()
@@ -480,7 +502,7 @@ class ContractApp(ctk.CTk):
             category_filter = self.combo_filter.get()
             
             # Create cache key
-            cache_key = f"{search_text}|{category_filter}|{str(self.current_search_params)}"
+            cache_key = f"{search_text}|{category_filter}|{str(self.current_search_params)}|{str(self.current_status_filter)}"
             
             # Check if result is in cache (LRU: move to end if found)
             if cache_key in self._search_cache:
@@ -520,6 +542,13 @@ class ContractApp(ctk.CTk):
                             filtered_contracts = self.db_manager.fuzzy_search(search_text, category_filter)
                     else:
                         filtered_contracts = self.db_manager.search_contracts_comprehensive(search_text, category_filter)
+                        
+                    # Εφαρμογή φίλτρου κατάστασης (από clickable KPI cards)
+                    if self.current_status_filter:
+                        filtered_contracts = [
+                            c for c in filtered_contracts
+                            if get_contract_status(c.get('expiry_date')) == self.current_status_filter
+                        ]
                 except sqlite3.Error as db_err:
                     logger.error(f"Σφάλμα βάσης δεδομένων κατά την αναζήτηση: {db_err}", exc_info=True)
                     self.lift()

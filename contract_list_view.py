@@ -24,6 +24,18 @@ class ContractListView(ctk.CTkScrollableFrame):
         
 
 
+    def set_title(self, title: str):
+        """Ενημέρωση επικεφαλίδας του πλαισίου λίστας συμβάσεων"""
+        try:
+            self.configure(label_text=title)
+        except Exception:
+            pass
+        if hasattr(self, '_label') and self._label:
+            try:
+                self._label.configure(text=title)
+            except Exception:
+                pass
+
     def update_contracts(self, contracts: List[Dict[str, Any]]):
         self.contracts = contracts
         self.current_page = 1
@@ -39,9 +51,63 @@ class ContractListView(ctk.CTkScrollableFrame):
         self.contract_cards.clear()
         
         if not self.contracts:
-            no_contracts_label = ctk.CTkLabel(self, text="Δεν βρέθηκαν συμβάσεις.")
-            no_contracts_label.pack(pady=20)
-            self.contract_cards['no_contracts'] = no_contracts_label 
+            empty_frame = ctk.CTkFrame(self, fg_color="transparent")
+            empty_frame.pack(fill="both", expand=True, pady=(50, 30), padx=20)
+            self.contract_cards['empty_state'] = empty_frame
+
+            icon_lbl = ctk.CTkLabel(
+                empty_frame,
+                text="📋",
+                font=("Roboto", 46)
+            )
+            icon_lbl.pack(pady=(10, 8))
+
+            title_lbl = ctk.CTkLabel(
+                empty_frame,
+                text="Δεν βρέθηκαν συμβάσεις",
+                font=("Roboto", 18, "bold"),
+                text_color=("gray20", "gray85")
+            )
+            title_lbl.pack(pady=(0, 6))
+
+            sub_lbl = ctk.CTkLabel(
+                empty_frame,
+                text="Δεν υπάρχουν συμβάσεις με τα επιλεγμένα κριτήρια ή δεν έχει καταχωρηθεί ακόμα καμία σύμβαση.",
+                font=("Roboto", 12),
+                text_color=("gray50", "gray40"),
+                wraplength=450
+            )
+            sub_lbl.pack(pady=(0, 18))
+
+            btn_box = ctk.CTkFrame(empty_frame, fg_color="transparent")
+            btn_box.pack(pady=5)
+
+            if self.callbacks.get('new_contract'):
+                btn_new = ctk.CTkButton(
+                    btn_box,
+                    text="➕ Προσθήκη Πρώτης Σύμβασης",
+                    font=("Roboto", 13, "bold"),
+                    height=36,
+                    corner_radius=8,
+                    fg_color=self.theme_colors.get("primary", "#3B8ED0"),
+                    command=self.callbacks['new_contract']
+                )
+                btn_new.pack(side="left", padx=6)
+
+            if self.callbacks.get('clear_filters'):
+                btn_clear = ctk.CTkButton(
+                    btn_box,
+                    text="🧹 Καθαρισμός Φίλτρων",
+                    font=("Roboto", 12),
+                    height=36,
+                    corner_radius=8,
+                    fg_color=("gray75", "gray35"),
+                    hover_color=("gray65", "gray45"),
+                    text_color=("gray10", "gray95"),
+                    command=self.callbacks['clear_filters']
+                )
+                btn_clear.pack(side="left", padx=6)
+
             return
 
         # Calculate slice

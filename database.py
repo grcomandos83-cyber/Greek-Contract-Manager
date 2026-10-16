@@ -566,8 +566,16 @@ class DatabaseManager:
             contracts = [self._parse_contract_row(row) for row in cursor.fetchall()]
             
             # Εφαρμογή φίλτρου κατάστασης στη Python
-            if search_params.get('status_filter') and search_params['status_filter'] != "Όλες":
-                contracts = [c for c in contracts if get_contract_status(c.get('expiry_date')) == search_params['status_filter']]
+            raw_status = search_params.get('status_filter')
+            if raw_status and raw_status != "Όλες":
+                status_fallback_map = {
+                    "Ενεργές": "ACTIVE",
+                    "Λήγουν Σύντομα": "EXPIRING_SOON",
+                    "Ληγμένες": "EXPIRED",
+                    "Χωρίς Ημ/νία": "NO_DATE"
+                }
+                target_status = status_fallback_map.get(raw_status, raw_status)
+                contracts = [c for c in contracts if get_contract_status(c.get('expiry_date')) == target_status]
             
             # Φίλτρο special fields
             if search_params.get('special_field'):

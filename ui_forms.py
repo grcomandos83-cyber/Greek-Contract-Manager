@@ -595,6 +595,14 @@ class ContractFormToplevel(MessageBoxMixin, ctk.CTkToplevel):
 # =========================================================================
 
 class AdvancedSearchToplevel(MessageBoxMixin, ctk.CTkToplevel):
+    STATUS_MAP: Dict[str, str] = {
+        "Όλες": "Όλες",
+        "Ενεργές": "ACTIVE",
+        "Λήγουν Σύντομα": "EXPIRING_SOON",
+        "Ληγμένες": "EXPIRED",
+        "Χωρίς Ημ/νία": "NO_DATE"
+    }
+
     def __init__(self, master: Any, db_manager: Any, categories: List[str], current_theme: Optional[str] = None):
         super().__init__(master)
         
@@ -693,7 +701,7 @@ class AdvancedSearchToplevel(MessageBoxMixin, ctk.CTkToplevel):
         
         ctk.CTkLabel(filter_grid, text="Κατάσταση:").grid(row=1, column=0, sticky="w", padx=5)
         self.combo_status = ctk.CTkComboBox(filter_grid, 
-                                          values=["Όλες", "ACTIVE", "EXPIRING_SOON", "EXPIRED", "NO_DATE"])
+                                          values=list(self.STATUS_MAP.keys()))
         self.combo_status.set("Όλες")
         self.combo_status.grid(row=1, column=1, sticky="ew", padx=5, pady=2)
         
@@ -812,10 +820,13 @@ class AdvancedSearchToplevel(MessageBoxMixin, ctk.CTkToplevel):
     
     def execute_search(self) -> None:
         try:
+            raw_status = self.combo_status.get()
+            mapped_status = self.STATUS_MAP.get(raw_status, raw_status)
+
             search_params: Dict[str, Any] = {
                 'search_text': self.entry_search.get().strip(),
                 'category_filter': self.combo_category.get(),
-                'status_filter': self.combo_status.get(),
+                'status_filter': mapped_status,
                 'date_from': self.entry_date_from.get().strip(),
                 'date_to': self.entry_date_to.get().strip(),
                 'date_type': self.date_type_var.get(),
