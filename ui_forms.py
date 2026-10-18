@@ -200,7 +200,6 @@ class ContractFormToplevel(MessageBoxMixin, ctk.CTkToplevel):
                  current_theme: Optional[str] = None):
         super().__init__(master)
         
-        import os
         try:
             self.iconbitmap(get_resource_path(os.path.join("assets", "app.ico")))
         except Exception:
@@ -211,190 +210,588 @@ class ContractFormToplevel(MessageBoxMixin, ctk.CTkToplevel):
         self.categories = categories
         self.contract_to_edit = contract_to_edit
         self.current_theme = current_theme or "Minimalist"
+        self.theme_colors = COLOR_THEMES.get(
+            self.current_theme, 
+            COLOR_THEMES.get("Μπλε (Προεπιλογή)", COLOR_THEMES["Minimalist"])
+        )
         
         self.special_fields: Dict[str, Any] = {}
         self.result_contract: Optional[Dict[str, Any]] = None
+        self.selected_pdf_paths: List[str] = []
         
-        self.title_text = "Νέα Σύμβαση" if contract_to_edit is None else "Επεξεργασία Σύμβασης"
+        is_edit = contract_to_edit is not None
+        self.title_text = "Επεξεργασία Σύμβασης" if is_edit else "Νέα Σύμβαση"
+        self.header_icon = "✎" if is_edit else "➕"
+        
+        if is_edit:
+            prov_name = contract_to_edit.get('provider', '')
+            c_num = contract_to_edit.get('number', '')
+            tag = f" ({prov_name} - {c_num})" if (prov_name or c_num) else ""
+            self.subtitle_text = f"Τροποποίηση στοιχείων και εγγράφων σύμβασης{tag}"
+        else:
+            self.subtitle_text = "Συμπληρώστε τα στοιχεία για την καταχώριση νέας σύμβασης"
+            
         self.title(self.title_text)
 
-        self.width = 500
-        self.height = 600
+        self.width = 600
+        self.height = 750
         
         screen_width = self.winfo_screenwidth()
         screen_height = self.winfo_screenheight()
-        x = (screen_width // 2) - (self.width // 2)
-        y = (screen_height // 2) - (self.height // 2)
+        x = max(0, (screen_width // 2) - (self.width // 2))
+        y = max(20, (screen_height // 2) - (self.height // 2) - 25)
         self.geometry(f"{self.width}x{self.height}+{x}+{y}")
+        self.minsize(540, 620)
         
-        self.transient(master) 
+        self.transient(master)
         self.attributes("-topmost", True)
-        self.grab_set() 
+        self.grab_set()
 
-        self.grid_columnconfigure(0, weight=1)
-        
         self._setup_form()
+        
+        # Συντόμευση Escape για κλείσιμο
+        self.bind("<Escape>", lambda e: self.destroy())
         
         # Subscribe to category changes
         SignalManager.subscribe(Signals.CATEGORIES_UPDATED, self._on_categories_signal)
         
         if self.contract_to_edit:
             self._load_edit_data(contract_to_edit)
+        else:
+            self._update_expiry_preview()
+            # Εστίαση αυτόματα στο πρώτο πεδίο
+            self.after(100, lambda: self.entry_provider.focus_set())
 
     def _on_categories_signal(self, data=None):
         self._update_combo_box(data)
 
     def destroy(self):
-        # Unsubscribe before closing
         SignalManager.unsubscribe(Signals.CATEGORIES_UPDATED, self._on_categories_signal)
         super().destroy()
+
+    def _get_existing_providers(self) -> List[str]:
+        """Ανάκτηση μοναδικών παρόχων από τη βάση για προτάσεις / αυτόματη συμπλήρωση"""
+        providers = []
+        try:
+            if hasattr(self.db_manager, "get_connection"):
+                with self.db_manager.get_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        "SELECT DISTINCT provider FROM contracts "
+                        "WHERE provider IS NOT NULL AND TRIM(provider) != '' "
+                        "ORDER BY provider COLLATE NOCASE ASC"
+                    )
+                    providers = [row[0].strip() for row in cursor.fetchall() if row[0] and row[0].strip()]
+        except Exception as e:
+            logger.debug(f"Could not fetch existing providers: {e}")
+        return providers
+
+    def _create_section_card(self, parent: Any, title: str) -> ctk.CTkFrame:
+        """Βοηθητική μέθοδος δημιουργίας μοντέρνας κάρτας ενότητας"""
+        card = ctk.CTkFrame(
+            parent,
+            fg_color=("#FFFFFF", "#2b2b2b"),
+            corner_radius=10,
+            border_width=1,
+            border_color=("#E2E8F0", "#3a3a3a")
+        )
+        card.pack(fill="x", pady=(0, 12), padx=2)
+        
+        header = ctk.CTkLabel(
+            card,
+            text=title,
+            font=("Roboto", 13, "bold"),
+            text_color=self.theme_colors.get("primary", "#3B8ED0"),
+            anchor="w"
+        )
+        header.pack(fill="x", padx=15, pady=(10, 6))
+        
+        sep = ctk.CTkFrame(card, height=1, fg_color=("#EDF2F7", "#3a3a3a"))
+        sep.pack(fill="x", padx=15, pady=(0, 8))
+        
+        content = ctk.CTkFrame(card, fg_color="transparent")
+        content.pack(fill="x", padx=15, pady=(0, 12))
+        return content
+
+    def _create_aligned_entry(self, parent: Any, label_text: str, placeholder: str = "", required: bool = False) -> ctk.CTkEntry:
+        """Δημιουργία στοιχισμένου πεδίου με ετικέτα αριστερά και αυτόματη επαναφορά περιγράμματος"""
+        row_frame = ctk.CTkFrame(parent, fg_color="transparent")
+        row_frame.pack(pady=4, fill="x")
+        
+        lbl_box = ctk.CTkFrame(row_frame, fg_color="transparent", width=155)
+        lbl_box.pack(side="left", fill="y")
+        lbl_box.pack_propagate(False)
+        
+        ctk.CTkLabel(lbl_box, text=label_text, font=("Roboto", 12, "bold" if required else "normal"), anchor="w").pack(side="left")
+        if required:
+            ctk.CTkLabel(lbl_box, text=" *", font=("Roboto", 13, "bold"), text_color=self.theme_colors["danger"]).pack(side="left")
             
+        entry = ctk.CTkEntry(
+            row_frame,
+            placeholder_text=placeholder,
+            height=32,
+            corner_radius=6,
+            border_width=1,
+            border_color=("#CBD5E1", "#4A5568")
+        )
+        entry.pack(side="right", fill="x", expand=True)
+        
+        # Επαναφορά χρώματος περιγράμματος όταν ο χρήστης πληκτρολογεί
+        entry.bind("<KeyPress>", lambda e, ent=entry: ent.configure(border_color=("#CBD5E1", "#4A5568"), border_width=1))
+        return entry
+
     def _setup_form(self) -> None:
-        # Use scrollable frame for main content
-        main_frame = ctk.CTkScrollableFrame(self, fg_color="transparent")
-        main_frame.pack(fill="both", expand=True, padx=20, pady=20)
+        # 1. HEADER BANNER (Σταθερό στην κορυφή)
+        header_banner = ctk.CTkFrame(self, fg_color=self.theme_colors["primary"], corner_radius=0)
+        header_banner.pack(fill="x", side="top")
         
-        self.lbl_mode = ctk.CTkLabel(main_frame, text=self.title_text, font=("Roboto", 20, "bold"))
-        self.lbl_mode.pack(pady=10)
+        header_inner = ctk.CTkFrame(header_banner, fg_color="transparent")
+        header_inner.pack(fill="x", padx=20, pady=12)
         
-        def create_aligned_entry(parent, label_text, placeholder="") -> ctk.CTkEntry:
-            row_frame = ctk.CTkFrame(parent, fg_color="transparent")
-            row_frame.pack(pady=4, padx=0, fill="x")
-            ctk.CTkLabel(row_frame, text=label_text, width=150, anchor="w").pack(side="left")
-            entry = ctk.CTkEntry(row_frame, placeholder_text=placeholder)
-            entry.pack(side="right", fill="x", expand=True)
-            return entry
-
-        self.entry_provider = create_aligned_entry(main_frame, "Όνομα Παρόχου:", "Πάροχος")
-        self.entry_number = create_aligned_entry(main_frame, "Αριθμός Σύμβασης:", "Αριθμός")
+        ctk.CTkLabel(
+            header_inner,
+            text=f"{self.header_icon}  {self.title_text}",
+            font=("Roboto", 18, "bold"),
+            text_color="white",
+            anchor="w"
+        ).pack(fill="x")
         
-        date_frame_row = ctk.CTkFrame(main_frame, fg_color="transparent")
-        date_frame_row.pack(pady=4, padx=0, fill="x")
-        ctk.CTkLabel(date_frame_row, text="Ημερομηνία Σύμβασης:", width=150, anchor="w").pack(side="left")
+        ctk.CTkLabel(
+            header_inner,
+            text=self.subtitle_text,
+            font=("Roboto", 11),
+            text_color=("#E2E8F0", "#CBD5E1"),
+            anchor="w"
+        ).pack(fill="x", pady=(2, 0))
 
-        theme_colors = COLOR_THEMES.get(self.current_theme, COLOR_THEMES["Minimalist"])
-        self.entry_date = DateEntry(date_frame_row, 
-                                    date_pattern='dd/mm/yyyy',
-                                    width=12, 
-                                    background=theme_colors['primary'], 
-                                    foreground='white', 
-                                    borderwidth=2,
-                                    font=("Roboto", 12))
-        self.entry_date.pack(side="right", fill="x", expand=True)
-        self.entry_date.set_date(datetime.now())
+        # 2. STICKY FOOTER (Σταθερή μπάρα ενεργειών στο κάτω μέρος)
+        footer_bar = ctk.CTkFrame(
+            self,
+            fg_color=("#F1F5F9", "#202020"),
+            corner_radius=0,
+            border_width=1,
+            border_color=("#E2E8F0", "#333333")
+        )
+        footer_bar.pack(fill="x", side="bottom")
+        
+        action_row = ctk.CTkFrame(footer_bar, fg_color="transparent")
+        action_row.pack(fill="x", padx=20, pady=10)
+        
+        self.btn_save = ctk.CTkButton(
+            action_row,
+            text="💾 Αποθήκευση Σύμβασης",
+            font=("Roboto", 13, "bold"),
+            height=36,
+            corner_radius=8,
+            command=self._save_and_close,
+            fg_color=self.theme_colors["primary"],
+            hover_color=self.theme_colors["secondary"]
+        )
+        self.btn_save.pack(side="left", fill="x", expand=True, padx=(0, 8))
+        
+        if self.contract_to_edit:
+            ctk.CTkButton(
+                action_row,
+                text="📋 Εκδόσεις",
+                font=("Roboto", 12, "bold"),
+                height=36,
+                width=110,
+                corner_radius=8,
+                command=self._show_versions,
+                fg_color="#8e44ad",
+                hover_color="#732d91"
+            ).pack(side="left", padx=(0, 8))
+        
+        ctk.CTkButton(
+            action_row,
+            text="✕ Ακύρωση",
+            font=("Roboto", 12, "bold"),
+            height=36,
+            width=100,
+            corner_radius=8,
+            command=self.destroy,
+            fg_color="transparent",
+            border_width=1,
+            border_color=self.theme_colors["danger"],
+            text_color=self.theme_colors["danger"],
+            hover_color=self.theme_colors["light_danger"]
+        ).pack(side="right")
 
-        self.entry_months = create_aligned_entry(main_frame, "Διάρκεια (Μήνες):", "Σε μήνες")
+        # 3. ΚΥΡΙΩΣ ΠΕΡΙΕΧΟΜΕΝΟ (Scrollable)
+        main_frame = ctk.CTkScrollableFrame(self, fg_color=("#F8FAFC", "#1e1e1e"))
+        main_frame.pack(fill="both", expand=True, padx=12, pady=12)
 
-        type_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
-        type_frame.pack(pady=8, padx=0, fill="x")
-        ctk.CTkLabel(type_frame, text="Είδος Σύμβασης:", width=150, anchor="w").pack(side="left")
-        self.combo_type = ctk.CTkComboBox(type_frame, values=self.categories, command=self.show_dynamic_fields)
+        # --- ΕΝΟΤΗΤΑ 1: ΒΑΣΙΚΑ ΣΤΟΙΧΕΙΑ ---
+        sec_basic = self._create_section_card(main_frame, "🏢  1. Βασικά Στοιχεία Σύμβασης")
+        
+        # Πάροχος με κουμπί ιστορικού / προτάσεων
+        prov_row = ctk.CTkFrame(sec_basic, fg_color="transparent")
+        prov_row.pack(pady=4, fill="x")
+        
+        lbl_box = ctk.CTkFrame(prov_row, fg_color="transparent", width=155)
+        lbl_box.pack(side="left", fill="y")
+        lbl_box.pack_propagate(False)
+        ctk.CTkLabel(lbl_box, text="Όνομα Παρόχου:", font=("Roboto", 12, "bold"), anchor="w").pack(side="left")
+        ctk.CTkLabel(lbl_box, text=" *", font=("Roboto", 13, "bold"), text_color=self.theme_colors["danger"]).pack(side="left")
+        
+        self.entry_provider = ctk.CTkEntry(
+            prov_row,
+            placeholder_text="π.χ. ΔΕΗ, Cosmote, Vodafone, ΕΥΔΑΠ...",
+            height=32,
+            corner_radius=6,
+            border_width=1,
+            border_color=("#CBD5E1", "#4A5568")
+        )
+        self.entry_provider.pack(side="left", fill="x", expand=True)
+        self.entry_provider.bind("<KeyPress>", lambda e: self.entry_provider.configure(border_color=("#CBD5E1", "#4A5568"), border_width=1))
+        
+        existing_provs = self._get_existing_providers()
+        if existing_provs:
+            btn_pick_prov = ctk.CTkButton(
+                prov_row,
+                text="▼",
+                width=32,
+                height=32,
+                corner_radius=6,
+                fg_color=("gray75", "#444"),
+                text_color=("gray15", "white"),
+                hover_color=("gray65", "#555"),
+                command=lambda: self._popup_provider_menu(btn_pick_prov, existing_provs)
+            )
+            btn_pick_prov.pack(side="right", padx=(6, 0))
+            
+            # Quick suggestion chips
+            chips_row = ctk.CTkFrame(sec_basic, fg_color="transparent")
+            chips_row.pack(fill="x", pady=(0, 4))
+            ctk.CTkLabel(chips_row, text="Συχνές επιλογές:", font=("Roboto", 10), text_color="gray", width=155, anchor="w").pack(side="left")
+            chips_box = ctk.CTkFrame(chips_row, fg_color="transparent")
+            chips_box.pack(side="left", fill="x", expand=True)
+            for p in existing_provs[:4]:
+                ctk.CTkButton(
+                    chips_box,
+                    text=p,
+                    height=22,
+                    corner_radius=5,
+                    font=("Roboto", 10),
+                    fg_color=("gray85", "#333"),
+                    text_color=("gray20", "gray85"),
+                    hover_color=self.theme_colors["primary"],
+                    command=lambda val=p: self._select_suggested_provider(val)
+                ).pack(side="left", padx=(0, 4))
+        
+        self.entry_number = self._create_aligned_entry(sec_basic, "Αριθμός Σύμβασης:", "π.χ. ΣΥΜΒ-2026/01", required=True)
+        
+        type_frame = ctk.CTkFrame(sec_basic, fg_color="transparent")
+        type_frame.pack(pady=4, fill="x")
+        ctk.CTkLabel(type_frame, text="Είδος Σύμβασης:", font=("Roboto", 12), width=155, anchor="w").pack(side="left")
+        
+        self.combo_type = ctk.CTkComboBox(
+            type_frame,
+            values=self.categories if self.categories else ["Γενική"],
+            command=self.show_dynamic_fields,
+            height=32,
+            corner_radius=6
+        )
         self.combo_type.set(self.categories[0] if self.categories else "Επιλέξτε Είδος")
         self.combo_type.pack(side="left", fill="x", expand=True)
         
-        btn_manage = ctk.CTkButton(type_frame, text="⚙", width=30, command=self.open_category_manager, fg_color="#444")
-        btn_manage.pack(side="right", padx=(5, 0))
-        
-        self.dynamic_fields_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
-        self.dynamic_fields_frame.pack(pady=5, padx=0, fill="x")
-        
-        comments_label = ctk.CTkLabel(main_frame, text="Σχόλια - Παρατηρήσεις:", anchor="w")
-        comments_label.pack(pady=(10, 5), fill="x")
-        self.text_comments = ctk.CTkTextbox(main_frame, height=80)
-        self.text_comments.pack(pady=(0, 8), fill="x")
+        btn_manage = ctk.CTkButton(
+            type_frame,
+            text="⚙ Είδη",
+            width=65,
+            height=32,
+            corner_radius=6,
+            command=self.open_category_manager,
+            fg_color=("gray70", "#444"),
+            text_color=("gray10", "white"),
+            hover_color=("gray60", "#555")
+        )
+        btn_manage.pack(side="right", padx=(6, 0))
 
-        # Multiple PDF support
-        self.selected_pdf_paths: List[str] = []
+        # --- ΕΝΟΤΗΤΑ 2: ΔΙΑΡΚΕΙΑ & ΗΜΕΡΟΜΗΝΙΕΣ ---
+        sec_dates = self._create_section_card(main_frame, "📅  2. Ημερομηνία Έναρξης & Διάρκεια")
         
-        pdf_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
-        pdf_frame.pack(pady=10, fill="x")
+        date_frame_row = ctk.CTkFrame(sec_dates, fg_color="transparent")
+        date_frame_row.pack(pady=4, fill="x")
+        ctk.CTkLabel(date_frame_row, text="Ημερομηνία Έναρξης:", font=("Roboto", 12), width=155, anchor="w").pack(side="left")
+
+        self.entry_date = DateEntry(
+            date_frame_row,
+            date_pattern='dd/mm/yyyy',
+            width=14,
+            background=self.theme_colors['primary'],
+            foreground='white',
+            borderwidth=1,
+            font=("Roboto", 11)
+        )
+        self.entry_date.pack(side="left", fill="x", expand=True)
+        self.entry_date.set_date(datetime.now())
+        self.entry_date.bind("<<DateEntrySelected>>", lambda e: self._update_expiry_preview())
+        self.entry_date.bind("<KeyRelease>", lambda e: self._update_expiry_preview())
+
+        btn_today = ctk.CTkButton(
+            date_frame_row,
+            text="Σήμερα",
+            width=65,
+            height=28,
+            font=("Roboto", 11),
+            fg_color=("gray75", "#444"),
+            text_color=("gray15", "white"),
+            command=self._set_date_today
+        )
+        btn_today.pack(side="right", padx=(6, 0))
+
+        self.entry_months = self._create_aligned_entry(sec_dates, "Διάρκεια (Μήνες):", "π.χ. 12, 24 (ή κενό για αορίστου)")
+        self.entry_months.bind("<KeyRelease>", lambda e: self._update_expiry_preview())
+
+        # Quick-select κουμπιά διάρκειας
+        presets_row = ctk.CTkFrame(sec_dates, fg_color="transparent")
+        presets_row.pack(fill="x", pady=(4, 6))
+        ctk.CTkLabel(presets_row, text="Γρήγορη Επιλογή:", font=("Roboto", 11), text_color="gray", width=155, anchor="w").pack(side="left")
         
-        self.btn_pdf = ctk.CTkButton(pdf_frame, text="Επιλογή Αρχείων PDF 📎",
-                                     command=self._select_pdf_files, fg_color="#555")
-        self.btn_pdf.pack(side="left", fill="x", expand=True, padx=(0, 5))
+        chips_container = ctk.CTkFrame(presets_row, fg_color="transparent")
+        chips_container.pack(side="left", fill="x", expand=True)
         
-        self.btn_clear_pdfs = ctk.CTkButton(pdf_frame, text="🗑", width=40,
-                                            command=self._clear_pdfs, fg_color="#d9534f")
+        for label_m, val_m in [("6μ.", "6"), ("12μ.", "12"), ("18μ.", "18"), ("24μ.", "24"), ("36μ.", "36"), ("Αορίστου", "")]:
+            is_highlight = val_m in ("12", "24")
+            ctk.CTkButton(
+                chips_container,
+                text=label_m,
+                width=46 if val_m else 68,
+                height=24,
+                corner_radius=6,
+                font=("Roboto", 11, "bold" if is_highlight else "normal"),
+                fg_color=self.theme_colors["secondary"] if is_highlight else ("gray80", "#3a3a3a"),
+                text_color="white" if is_highlight else ("gray15", "gray90"),
+                hover_color=self.theme_colors["primary"],
+                command=lambda v=val_m: self._set_quick_months(v)
+            ).pack(side="left", padx=(0, 4))
+
+        # Πλαίσιο ζωντανής προεπισκόπησης λήξης
+        self.expiry_preview_frame = ctk.CTkFrame(
+            sec_dates,
+            fg_color=("#F1F5F9", "#222b32"),
+            corner_radius=8,
+            border_width=1,
+            border_color=("#CBD5E1", "#3a4a54")
+        )
+        self.expiry_preview_frame.pack(fill="x", pady=(6, 0))
+        
+        self.lbl_expiry_preview = ctk.CTkLabel(
+            self.expiry_preview_frame,
+            text="📅 Υπολογισμένη Λήξη: —",
+            font=("Roboto", 12, "bold"),
+            text_color=self.theme_colors["primary"]
+        )
+        self.lbl_expiry_preview.pack(padx=10, pady=6, anchor="w")
+
+        # --- ΕΝΟΤΗΤΑ 3: ΔΥΝΑΜΙΚΑ ΠΕΔΙΑ ΚΑΤΗΓΟΡΙΑΣ ---
+        self.dynamic_section_wrapper = ctk.CTkFrame(main_frame, fg_color="transparent")
+        self.dynamic_section_wrapper.pack(fill="x")
+        self.dynamic_fields_frame = ctk.CTkFrame(self.dynamic_section_wrapper, fg_color="transparent")
+
+        # --- ΕΝΟΤΗΤΑ 4: ΣΧΟΛΙΑ & ΑΡΧΕΙΑ PDF ---
+        sec_extra = self._create_section_card(main_frame, "📎  4. Έγγραφα PDF & Παρατηρήσεις")
+        
+        pdf_header_row = ctk.CTkFrame(sec_extra, fg_color="transparent")
+        pdf_header_row.pack(fill="x", pady=(0, 4))
+        
+        self.btn_pdf = ctk.CTkButton(
+            pdf_header_row,
+            text="📎 Προσθήκη Αρχείων PDF...",
+            height=32,
+            corner_radius=6,
+            font=("Roboto", 12, "bold"),
+            command=self._select_pdf_files,
+            fg_color=self.theme_colors["secondary"]
+        )
+        self.btn_pdf.pack(side="left", fill="x", expand=True, padx=(0, 6))
+        
+        self.btn_clear_pdfs = ctk.CTkButton(
+            pdf_header_row,
+            text="🗑 Καθαρισμός",
+            width=100,
+            height=32,
+            corner_radius=6,
+            font=("Roboto", 11),
+            command=self._clear_pdfs,
+            fg_color=("gray75", "#444"),
+            text_color=("gray15", "white"),
+            hover_color=self.theme_colors["danger"]
+        )
         self.btn_clear_pdfs.pack(side="right")
         
-        # PDF list display
-        self.pdf_list_frame = ctk.CTkScrollableFrame(main_frame, height=50, fg_color="transparent")
-        self.pdf_list_frame.pack(pady=(0, 5), fill="x")
-
-        action_row = ctk.CTkFrame(main_frame, fg_color="transparent")
-        action_row.pack(pady=10, fill="x")
-        
-        ctk.CTkButton(action_row, text="Αποθήκευση", command=self._save_and_close, 
-                     fg_color=theme_colors["primary"]).pack(side="left", fill="x", expand=True, padx=(0, 5))
-        
-        # Κουμπί διαχείρισης εκδόσεων (μόνο για υπάρχουσες συμβάσεις)
-        if self.contract_to_edit:
-            ctk.CTkButton(action_row, text="📋 Εκδόσεις", command=self._show_versions, 
-                         fg_color="#8e44ad", width=100).pack(side="left", padx=(0, 5))
-        
-        ctk.CTkButton(action_row, text="Ακύρωση", command=self.destroy, 
-                     fg_color="transparent", border_width=1, border_color="red", text_color="red").pack(side="right", fill="x", expand=True, padx=(5, 0))
-
-        self.show_dynamic_fields(self.combo_type.get())
-
-    def _load_edit_data(self, contract: Dict[str, Any]) -> None:
-        self.entry_provider.insert(0, contract.get('provider', ''))
-        self.entry_number.insert(0, contract.get('number', ''))
-        self.entry_months.insert(0, contract.get('months', ''))
-        self.combo_type.set(contract.get('type', self.categories[0] if self.categories else "Επιλέξτε Είδος"))
-        
-        self.entry_date.delete(0, 'end')
-        self.entry_date.insert(0, contract.get('date', datetime.now().strftime('%d/%m/%Y'))) 
-
-        self.text_comments.delete("1.0", "end")
-        self.text_comments.insert("0.0", contract.get('comments', ''))
-        
-        # Load multiple PDFs
-        pdf_paths = contract.get('pdf_paths', [])
-        if not pdf_paths and contract.get('pdf_path'):
-            # Backward compatibility: convert single pdf_path to list
-            pdf_paths = [contract.get('pdf_path')]
-        
-        self.selected_pdf_paths = pdf_paths if pdf_paths else []
+        self.pdf_list_frame = ctk.CTkFrame(sec_extra, fg_color="transparent")
+        self.pdf_list_frame.pack(pady=(2, 8), fill="x")
         self._update_pdf_list_display()
 
-        self.show_dynamic_fields(contract.get('type', ''))
-        
-        special_data_str = contract.get('special_data', '{}')
-        if special_data_str:
-            try:
-                special_data = json.loads(special_data_str) if isinstance(special_data_str, str) else special_data_str
-                while isinstance(special_data, str):
-                    try:
-                        special_data = json.loads(special_data)
-                    except Exception:
-                        break
-                if isinstance(special_data, dict):
-                    for key, value in special_data.items():
-                        if key in self.special_fields:
-                            widget = self.special_fields[key]
-                            if isinstance(widget, ctk.CTkEntry):
-                                widget.insert(0, value)
-            except Exception:
-                pass
+        ctk.CTkLabel(sec_extra, text="Σχόλια / Παρατηρήσεις:", font=("Roboto", 12), anchor="w").pack(pady=(4, 4), fill="x")
+        self.text_comments = ctk.CTkTextbox(
+            sec_extra,
+            height=75,
+            corner_radius=6,
+            border_width=1,
+            border_color=("#CBD5E1", "#4A5568")
+        )
+        self.text_comments.pack(fill="x")
+
+        # Αρχική εμφάνιση δυναμικών πεδίων
+        self.show_dynamic_fields(self.combo_type.get())
+
+    def _popup_provider_menu(self, anchor_widget: Any, providers: List[str]) -> None:
+        """Εμφάνιση μενού με προηγούμενους παρόχους"""
+        if not providers:
+            return
+        menu = tk.Menu(self, tearoff=0, font=("Roboto", 10))
+        for p in providers[:25]:
+            menu.add_command(
+                label=p,
+                command=lambda val=p: self._select_suggested_provider(val)
+            )
+        try:
+            x = anchor_widget.winfo_rootx()
+            y = anchor_widget.winfo_rooty() + anchor_widget.winfo_height()
+            menu.tk_popup(x, y)
+        finally:
+            menu.grab_release()
+
+    def _select_suggested_provider(self, provider_name: str) -> None:
+        """Επιλογή παρόχου από τις προτάσεις"""
+        self.entry_provider.delete(0, "end")
+        self.entry_provider.insert(0, provider_name)
+        self.entry_provider.configure(border_color=("#CBD5E1", "#4A5568"), border_width=1)
+
+    def _set_date_today(self) -> None:
+        self.entry_date.set_date(datetime.now())
+        self._update_expiry_preview()
+
+    def _set_quick_months(self, months_val: str) -> None:
+        self.entry_months.delete(0, "end")
+        if months_val:
+            self.entry_months.insert(0, months_val)
+        self.entry_months.configure(border_color=("#CBD5E1", "#4A5568"), border_width=1)
+        self._update_expiry_preview()
+
+    def _update_expiry_preview(self) -> None:
+        """Ζωντανή ενημέρωση της υπολογισμένης ημερομηνίας λήξης και κατάστασης"""
+        date_str = self.entry_date.get().strip()
+        months_str = self.entry_months.get().strip()
+
+        if not validate_date(date_str):
+            self.lbl_expiry_preview.configure(
+                text="⚠ Μη έγκυρη ημερομηνία έναρξης (ΗΗ/ΜΜ/ΕΕΕΕ)",
+                text_color=self.theme_colors["danger"]
+            )
+            return
+
+        if not months_str:
+            self.lbl_expiry_preview.configure(
+                text="♾️ Σύμβαση Αορίστου Διάρκειας (Χωρίς ημερομηνία λήξης)",
+                text_color=("gray40", "gray75")
+            )
+            return
+
+        if not (months_str.isdigit() and int(months_str) > 0):
+            self.lbl_expiry_preview.configure(
+                text="⚠ Εισάγετε θετικό αριθμό μηνών (π.χ. 12, 24)",
+                text_color=self.theme_colors["warning"]
+            )
+            return
+
+        expiry_str = calculate_expiry_date(date_str, months_str)
+        status = get_contract_status(expiry_str)
+        status_map = {
+            "ACTIVE": ("ΕΝΕΡΓΗ", self.theme_colors.get("accent", "#2FA572")),
+            "EXPIRING_SOON": ("ΛΗΓΕΙ ΣΥΝΤΟΜΑ", self.theme_colors.get("warning", "#F39C12")),
+            "EXPIRED": ("ΕΛΗΞΕ", self.theme_colors.get("danger", "#BE3324"))
+        }
+        st_label, st_color = status_map.get(status, ("", self.theme_colors["primary"]))
+        badge = f"  •  [{st_label}]" if st_label else ""
+        self.lbl_expiry_preview.configure(
+            text=f"📅 Υπολογισμένη Λήξη: {expiry_str} ({months_str} μήνες){badge}",
+            text_color=st_color
+        )
 
     def show_dynamic_fields(self, choice: str) -> None:
-        for widget in self.dynamic_fields_frame.winfo_children():
+        """Εμφάνιση δυναμικών πεδίων ανάλογα με την κατηγορία σύμβασης"""
+        for widget in self.dynamic_section_wrapper.winfo_children():
             widget.destroy()
         
         self.special_fields = {}
 
-        def create_dynamic_entry(placeholder_text: str) -> ctk.CTkEntry:
-            entry = ctk.CTkEntry(self.dynamic_fields_frame, placeholder_text=placeholder_text)
-            entry.pack(pady=5, fill="x")
-            return entry
-
         from constants import CATEGORY_DYNAMIC_FIELDS
         fields_config = CATEGORY_DYNAMIC_FIELDS.get(choice, {})
-        for field_key, field_label in fields_config.items():
-            self.special_fields[field_key] = create_dynamic_entry(field_label)
+        if not fields_config:
+            return
 
-        # Removed pack() and pack_forget() to maintain original layout position.
+        sec_dyn = self._create_section_card(
+            self.dynamic_section_wrapper,
+            f"⚡  3. Ειδικά Στοιχεία Κατηγορίας «{choice}»"
+        )
+        for field_key, field_label in fields_config.items():
+            self.special_fields[field_key] = self._create_aligned_entry(
+                sec_dyn,
+                f"{field_label}:",
+                placeholder=f"Εισάγετε {field_label.lower()}..."
+            )
+
+    def _load_edit_data(self, contract: Dict[str, Any]) -> None:
+        """Φόρτωση δεδομένων υπάρχουσας σύμβασης για επεξεργασία"""
+        self.entry_provider.insert(0, contract.get('provider', ''))
+        self.entry_number.insert(0, contract.get('number', ''))
+        
+        months_val = str(contract.get('months', '') or '')
+        self.entry_months.insert(0, months_val)
+        
+        self.combo_type.set(contract.get('type', self.categories[0] if self.categories else "Επιλέξτε Είδος"))
+        
+        raw_date = contract.get('date', '')
+        if raw_date:
+            try:
+                if '-' in str(raw_date):
+                    d = datetime.strptime(str(raw_date), '%Y-%m-%d').date()
+                else:
+                    d = datetime.strptime(str(raw_date), '%d/%m/%Y').date()
+                self.entry_date.set_date(d)
+            except Exception:
+                self.entry_date.delete(0, 'end')
+                self.entry_date.insert(0, str(raw_date))
+        else:
+            self.entry_date.set_date(datetime.now())
+
+        self.text_comments.delete("1.0", "end")
+        self.text_comments.insert("0.0", contract.get('comments', ''))
+        
+        pdf_paths = contract.get('pdf_paths', [])
+        if not pdf_paths and contract.get('pdf_path'):
+            pdf_paths = [contract.get('pdf_path')]
+        
+        self.selected_pdf_paths = list(pdf_paths) if pdf_paths else []
+        self._update_pdf_list_display()
+
+        self.show_dynamic_fields(contract.get('type', ''))
+        
+        special_data_raw = contract.get('special_data', '{}')
+        special_data = {}
+        if isinstance(special_data_raw, dict):
+            special_data = special_data_raw
+        elif isinstance(special_data_raw, str) and special_data_raw.strip():
+            try:
+                parsed = json.loads(special_data_raw)
+                while isinstance(parsed, str):
+                    parsed = json.loads(parsed)
+                if isinstance(parsed, dict):
+                    special_data = parsed
+            except Exception:
+                special_data = {}
+
+        for key, value in special_data.items():
+            if key in self.special_fields and value is not None:
+                widget = self.special_fields[key]
+                if isinstance(widget, ctk.CTkEntry):
+                    widget.insert(0, str(value))
+
+        self._update_expiry_preview()
 
     def _select_pdf_files(self) -> None:
         """Επιλογή πολλαπλών αρχείων PDF"""
@@ -405,7 +802,6 @@ class ContractFormToplevel(MessageBoxMixin, ctk.CTkToplevel):
         self.attributes("-topmost", True)
         
         if filenames:
-            # Add new files to the list (avoid duplicates)
             for filename in filenames:
                 if filename not in self.selected_pdf_paths:
                     self.selected_pdf_paths.append(filename)
@@ -423,56 +819,89 @@ class ContractFormToplevel(MessageBoxMixin, ctk.CTkToplevel):
             self._update_pdf_list_display()
     
     def _update_pdf_list_display(self) -> None:
-        """Ενημέρωση της εμφάνισης της λίστας PDF"""
-        # Clear existing widgets
+        """Ενημέρωση της εμφάνισης των αρχείων PDF σε κάρτες/chips"""
         for widget in self.pdf_list_frame.winfo_children():
             widget.destroy()
         
         if not self.selected_pdf_paths:
-            ctk.CTkLabel(self.pdf_list_frame, text="Δεν έχουν επιλεγεί αρχεία PDF",
-                        text_color="gray", font=("Roboto", 11)).pack(pady=3)
-            self.btn_pdf.configure(text="Επιλογή Αρχείων PDF 📎", fg_color="#555")
+            ctk.CTkLabel(
+                self.pdf_list_frame,
+                text="Δεν έχουν επισυναφθεί αρχεία PDF.",
+                text_color="gray",
+                font=("Roboto", 11, "italic")
+            ).pack(pady=4, anchor="w")
+            self.btn_pdf.configure(text="📎 Προσθήκη Αρχείων PDF...", fg_color=self.theme_colors["secondary"])
+            self.btn_clear_pdfs.configure(state="disabled")
         else:
-            self.btn_pdf.configure(text=f"PDF: {len(self.selected_pdf_paths)} αρχεία ✓",
-                                  fg_color="#2fa572")
+            self.btn_pdf.configure(
+                text=f"📎 Επιλεγμένα PDF ({len(self.selected_pdf_paths)}) — Προσθήκη κι άλλων",
+                fg_color=self.theme_colors.get("accent", "#2FA572")
+            )
+            self.btn_clear_pdfs.configure(state="normal")
             
             for pdf_path in self.selected_pdf_paths:
-                pdf_frame = ctk.CTkFrame(self.pdf_list_frame, fg_color=("#e0e0e0", "#2b2b2b"),
-                                        corner_radius=6, border_width=1,
-                                        border_color=("#cccccc", "#444444"))
-                pdf_frame.pack(fill="x", pady=2, padx=2)
+                pdf_row = ctk.CTkFrame(
+                    self.pdf_list_frame,
+                    fg_color=("#F1F5F9", "#222222"),
+                    corner_radius=6,
+                    border_width=1,
+                    border_color=("#CBD5E1", "#444444")
+                )
+                pdf_row.pack(fill="x", pady=2)
                 
                 filename = os.path.basename(pdf_path)
-                ctk.CTkLabel(pdf_frame, text=f"📄 {filename}", anchor="w",
-                           font=("Roboto", 11)).pack(side="left", fill="x", expand=True, padx=5, pady=3)
+                ctk.CTkLabel(
+                    pdf_row,
+                    text=f"📄 {filename}",
+                    anchor="w",
+                    font=("Roboto", 11)
+                ).pack(side="left", fill="x", expand=True, padx=8, pady=4)
                 
-                ctk.CTkButton(pdf_frame, text="✖", width=25, height=20, fg_color="#d9534f",
-                             hover_color="#c0392b", corner_radius=4,
-                             command=lambda p=pdf_path: self._remove_pdf(p)).pack(side="right", padx=3, pady=2)
+                ctk.CTkButton(
+                    pdf_row,
+                    text="✖",
+                    width=26,
+                    height=22,
+                    fg_color=self.theme_colors["danger"],
+                    hover_color="#922b21",
+                    corner_radius=4,
+                    command=lambda p=pdf_path: self._remove_pdf(p)
+                ).pack(side="right", padx=4, pady=3)
 
     def _save_and_close(self) -> None:
-        provider = self.entry_provider.get()
-        number = self.entry_number.get()
-        date = self.entry_date.get()
-        months = self.entry_months.get()
+        """Επικύρωση στοιχείων και αποθήκευση σύμβασης"""
+        provider = self.entry_provider.get().strip()
+        number = self.entry_number.get().strip()
+        date = self.entry_date.get().strip()
+        months = self.entry_months.get().strip()
         c_type = self.combo_type.get()
         comments = self.text_comments.get("1.0", "end-1c").strip()
         
-        if not provider or not number:
-            self._show_messagebox("error", "Σφάλμα", "Απαιτείται Όνομα Παρόχου και Αριθμός.")
+        # Οπτική επισήμανση (Inline Validation) αν λείπουν τα υποχρεωτικά πεδία
+        has_error = False
+        if not provider:
+            self.entry_provider.configure(border_color=self.theme_colors["danger"], border_width=2)
+            has_error = True
+        if not number:
+            self.entry_number.configure(border_color=self.theme_colors["danger"], border_width=2)
+            has_error = True
+            
+        if has_error:
+            self._show_messagebox(
+                "error", 
+                "Ελλιπή Στοιχεία", 
+                "Παρακαλώ συμπληρώστε τα υποχρεωτικά πεδία (*):\n• Όνομα Παρόχου\n• Αριθμός Σύμβασης"
+            )
             return
 
         if not validate_date(date):
-            self._show_messagebox("error", "Σφάλμα Ημερομηνίας", "Παρακαλώ εισάγετε έγκυρη Ημερομηνία Σύμβασης (DD/MM/YYYY).")
+            self._show_messagebox("error", "Σφάλμα Ημερομηνίας", "Παρακαλώ εισάγετε έγκυρη Ημερομηνία Έναρξης (ΗΗ/ΜΜ/ΕΕΕΕ).")
             return
 
         is_months_valid = months.isdigit() and int(months) > 0
         expiry_date = calculate_expiry_date(date, months) if is_months_valid else None
         
-        # Process multiple PDF files
         final_pdf_paths = []
-        
-        # Get existing PDF paths if editing
         existing_pdf_paths = []
         if self.contract_to_edit:
             existing_pdf_paths = self.contract_to_edit.get('pdf_paths', [])
@@ -481,14 +910,11 @@ class ContractFormToplevel(MessageBoxMixin, ctk.CTkToplevel):
         
         for pdf_path in self.selected_pdf_paths:
             try:
-                # Check if this is an existing file (already in PDF_FOLDER)
                 if pdf_path in existing_pdf_paths or pdf_path.startswith(PDF_FOLDER):
                     final_pdf_paths.append(pdf_path)
                 else:
-                    # New file - copy to PDF_FOLDER
                     file_name = os.path.basename(pdf_path)
                     timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-                    # Add a counter to avoid duplicates when multiple files are selected
                     counter = len(final_pdf_paths)
                     new_filename = f"{timestamp}_{counter}_{file_name}"
                     destination = os.path.join(PDF_FOLDER, new_filename)
@@ -496,62 +922,53 @@ class ContractFormToplevel(MessageBoxMixin, ctk.CTkToplevel):
                     if not os.path.exists(destination):
                         shutil.copy(pdf_path, destination)
                     final_pdf_paths.append(destination)
-                    
             except Exception as e:
-                self._show_messagebox("error", "Σφάλμα PDF",
-                                   f"Αποτυχία αντιγραφής PDF {os.path.basename(pdf_path)}: {e}")
+                self._show_messagebox("error", "Σφάλμα PDF", f"Αποτυχία αντιγραφής PDF {os.path.basename(pdf_path)}: {e}")
                 return
 
         special_data = {}
         for key, widget in self.special_fields.items():
             if isinstance(widget, ctk.CTkEntry):
                 value = widget.get().strip()
-                if value: special_data[key] = value
+                if value:
+                    special_data[key] = value
         
         new_id = self.contract_to_edit['id'] if self.contract_to_edit else str(uuid.uuid4())
-        
-        # Backward compatibility: keep pdf_path for first PDF
         first_pdf = final_pdf_paths[0] if final_pdf_paths else ""
         
         self.result_contract = {
             'id': new_id,
-            'provider': provider, 'number': number, 'date': date,
-            'months': months, 'type': c_type, 'comments': comments,
+            'provider': provider, 
+            'number': number, 
+            'date': date,
+            'months': months, 
+            'type': c_type, 
+            'comments': comments,
             'expiry_date': expiry_date,
-            'pdf_path': first_pdf,  # Backward compatibility
-            'pdf_paths': final_pdf_paths,  # New multiple PDF support
+            'pdf_path': first_pdf,
+            'pdf_paths': final_pdf_paths,
             'special_data': special_data
         }
         
-        # Δημιουργία έκδοσης αν είναι ενημέρωση (όχι νέα σύμβαση)
         if self.contract_to_edit:
             try:
                 change_desc = "Ενημέρωση σύμβασης"
-                self.db_manager.create_contract_version(
-                    self.result_contract,
-                    change_desc,
-                    "Χρήστης"
-                )
+                self.db_manager.create_contract_version(self.result_contract, change_desc, "Χρήστης")
             except Exception as e:
-                print(f"Warning: Could not create version: {e}")
+                logger.warning(f"Could not create version: {e}")
         
-        self.destroy() 
+        self.destroy()
 
     def open_category_manager(self) -> None:
-        self.attributes("-topmost", False) 
-        
-        # The window now updates via signals, no callback needed here for data.
-        # But we still want to reset topmost.
+        self.attributes("-topmost", False)
         def on_manager_close():
-             self.attributes("-topmost", True)
-
+            self.attributes("-topmost", True)
         CategoryManagerWindow(self, self.categories, self.db_manager, on_close_callback=on_manager_close)
 
     def _update_combo_box(self, data=None) -> None:
         self.combo_type.configure(values=self.categories)
         if self.categories:
             current = self.combo_type.get()
-
             renamed_to = None
             if isinstance(data, dict) and data.get("action") == "rename":
                 old_name = data.get("old_name")
@@ -575,17 +992,14 @@ class ContractFormToplevel(MessageBoxMixin, ctk.CTkToplevel):
         if not self.contract_to_edit:
             self._show_messagebox("warning", "Προειδοποίηση", "Μπορείτε να δείτε εκδόσεις μόνο για υπάρχουσες συμβάσεις")
             return
-        
         try:
-            contract_name = self.entry_provider.get() or "Σύμβαση"
-            theme_colors = COLOR_THEMES.get(self.current_theme, COLOR_THEMES["Minimalist"])
-            
+            contract_name = self.entry_provider.get().strip() or "Σύμβαση"
             ContractVersionsWindow(
                 self,
                 self.db_manager,
                 self.contract_to_edit['id'],
                 contract_name,
-                theme_colors
+                self.theme_colors
             )
         except Exception as e:
             self._show_messagebox("error", "Σφάλμα", f"Αποτυχία ανοίγματος εκδόσεων: {str(e)}")

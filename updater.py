@@ -8,8 +8,24 @@ import tempfile
 import time
 from tkinter import messagebox
 import customtkinter as ctk
+import re
 from constants import APP_VERSION, GITHUB_REPO
 from utils import get_resource_path
+
+
+def parse_version(v_str: str) -> tuple:
+    """
+    Καθαρίζει και μετατρέπει ένα version string (π.χ. 'v1.0.25' ή '1.0.26') σε tuple ακεραίων (1, 0, 25).
+    """
+    nums = re.findall(r'\d+', str(v_str))
+    return tuple(int(n) for n in nums) if nums else (0,)
+
+
+def is_newer_version(latest: str, current: str) -> bool:
+    """
+    Επιστρέφει True μόνο αν η έκδοση latest είναι αυστηρά νεότερη από την current.
+    """
+    return parse_version(latest) > parse_version(current)
 
 
 class DownloadCancelled(Exception):
@@ -317,7 +333,7 @@ def check_for_updates(parent_window=None):
                 data = json.loads(response.read().decode())
 
                 latest_version = data.get('tag_name')
-                if latest_version and latest_version != APP_VERSION:
+                if latest_version and is_newer_version(latest_version, APP_VERSION):
                     assets = data.get('assets', [])
                     download_url = None
                     is_installer = False
@@ -461,7 +477,7 @@ def _download_and_apply(download_url, is_installer=True, parent_window=None, new
                     creationflags=flags,
                     close_fds=True
                 )
-                sys.exit(0)
+                os._exit(0)
             except Exception as e:
                 messagebox.showerror("Σφάλμα Εγκατάστασης", f"Αποτυχία εκτέλεσης εγκαταστάτη:\n{e}", parent=parent_window)
                 return
@@ -559,7 +575,7 @@ def _download_and_apply(download_url, is_installer=True, parent_window=None, new
             creationflags=subprocess.CREATE_NO_WINDOW | DETACHED_PROCESS,
             close_fds=True,
         )
-        sys.exit(0)
+        os._exit(0)
 
     # Εκκίνηση παραθύρου προόδου λήψης (CTkProgressBar & Threaded urlretrieve)
     UpdateProgressDialog(
