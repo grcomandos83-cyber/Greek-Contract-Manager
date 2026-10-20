@@ -295,7 +295,7 @@ class ContractFormToplevel(MessageBoxMixin, ctk.CTkToplevel):
             border_width=1,
             border_color=("#E2E8F0", "#3a3a3a")
         )
-        card.pack(fill="x", pady=(0, 12), padx=2)
+        card.pack(fill="x", pady=(0, 6), padx=2)
         
         header = ctk.CTkLabel(
             card,
@@ -304,22 +304,22 @@ class ContractFormToplevel(MessageBoxMixin, ctk.CTkToplevel):
             text_color=self.theme_colors.get("primary", "#3B8ED0"),
             anchor="w"
         )
-        header.pack(fill="x", padx=15, pady=(10, 6))
+        header.pack(fill="x", padx=12, pady=(8, 4))
         
         sep = ctk.CTkFrame(card, height=1, fg_color=("#EDF2F7", "#3a3a3a"))
-        sep.pack(fill="x", padx=15, pady=(0, 8))
+        sep.pack(fill="x", padx=12, pady=(0, 4))
         
         content = ctk.CTkFrame(card, fg_color="transparent")
-        content.pack(fill="x", padx=15, pady=(0, 12))
+        content.pack(fill="x", padx=12, pady=(0, 6))
         return content
 
     def _create_aligned_entry(self, parent: Any, label_text: str, placeholder: str = "", required: bool = False) -> ctk.CTkEntry:
         """Δημιουργία στοιχισμένου πεδίου με ετικέτα αριστερά και αυτόματη επαναφορά περιγράμματος"""
         row_frame = ctk.CTkFrame(parent, fg_color="transparent")
-        row_frame.pack(pady=4, fill="x")
+        row_frame.pack(pady=2, fill="x")
         
-        lbl_box = ctk.CTkFrame(row_frame, fg_color="transparent", width=155)
-        lbl_box.pack(side="left", fill="y")
+        lbl_box = ctk.CTkFrame(row_frame, fg_color="transparent", width=155, height=28)
+        lbl_box.pack(side="left")
         lbl_box.pack_propagate(False)
         
         ctk.CTkLabel(lbl_box, text=label_text, font=("Roboto", 12, "bold" if required else "normal"), anchor="w").pack(side="left")
@@ -329,7 +329,7 @@ class ContractFormToplevel(MessageBoxMixin, ctk.CTkToplevel):
         entry = ctk.CTkEntry(
             row_frame,
             placeholder_text=placeholder,
-            height=32,
+            height=28,
             corner_radius=6,
             border_width=1,
             border_color=("#CBD5E1", "#4A5568")
@@ -419,17 +419,17 @@ class ContractFormToplevel(MessageBoxMixin, ctk.CTkToplevel):
 
         # 3. ΚΥΡΙΩΣ ΠΕΡΙΕΧΟΜΕΝΟ (Scrollable)
         main_frame = ctk.CTkScrollableFrame(self, fg_color=("#F8FAFC", "#1e1e1e"))
-        main_frame.pack(fill="both", expand=True, padx=12, pady=12)
+        main_frame.pack(fill="both", expand=True, padx=8, pady=(6, 8))
 
         # --- ΕΝΟΤΗΤΑ 1: ΒΑΣΙΚΑ ΣΤΟΙΧΕΙΑ ---
         sec_basic = self._create_section_card(main_frame, "🏢  1. Βασικά Στοιχεία Σύμβασης")
         
         # Πάροχος με κουμπί ιστορικού / προτάσεων
         prov_row = ctk.CTkFrame(sec_basic, fg_color="transparent")
-        prov_row.pack(pady=4, fill="x")
+        prov_row.pack(pady=2, fill="x")
         
-        lbl_box = ctk.CTkFrame(prov_row, fg_color="transparent", width=155)
-        lbl_box.pack(side="left", fill="y")
+        lbl_box = ctk.CTkFrame(prov_row, fg_color="transparent", width=155, height=28)
+        lbl_box.pack(side="left")
         lbl_box.pack_propagate(False)
         ctk.CTkLabel(lbl_box, text="Όνομα Παρόχου:", font=("Roboto", 12, "bold"), anchor="w").pack(side="left")
         ctk.CTkLabel(lbl_box, text=" *", font=("Roboto", 13, "bold"), text_color=self.theme_colors["danger"]).pack(side="left")
@@ -437,7 +437,7 @@ class ContractFormToplevel(MessageBoxMixin, ctk.CTkToplevel):
         self.entry_provider = ctk.CTkEntry(
             prov_row,
             placeholder_text="π.χ. ΔΕΗ, Cosmote, Vodafone, ΕΥΔΑΠ...",
-            height=32,
+            height=28,
             corner_radius=6,
             border_width=1,
             border_color=("#CBD5E1", "#4A5568")
@@ -462,7 +462,7 @@ class ContractFormToplevel(MessageBoxMixin, ctk.CTkToplevel):
             
             # Quick suggestion chips
             chips_row = ctk.CTkFrame(sec_basic, fg_color="transparent")
-            chips_row.pack(fill="x", pady=(0, 4))
+            chips_row.pack(fill="x", pady=(0, 2))
             ctk.CTkLabel(chips_row, text="Συχνές επιλογές:", font=("Roboto", 10), text_color="gray", width=155, anchor="w").pack(side="left")
             chips_box = ctk.CTkFrame(chips_row, fg_color="transparent")
             chips_box.pack(side="left", fill="x", expand=True)
@@ -482,7 +482,7 @@ class ContractFormToplevel(MessageBoxMixin, ctk.CTkToplevel):
         self.entry_number = self._create_aligned_entry(sec_basic, "Αριθμός Σύμβασης:", "π.χ. ΣΥΜΒ-2026/01", required=True)
         
         type_frame = ctk.CTkFrame(sec_basic, fg_color="transparent")
-        type_frame.pack(pady=4, fill="x")
+        type_frame.pack(pady=2, fill="x")
         ctk.CTkLabel(type_frame, text="Είδος Σύμβασης:", font=("Roboto", 12), width=155, anchor="w").pack(side="left")
         
         self.combo_type = ctk.CTkComboBox(
@@ -512,7 +512,7 @@ class ContractFormToplevel(MessageBoxMixin, ctk.CTkToplevel):
         sec_dates = self._create_section_card(main_frame, "📅  2. Ημερομηνία Έναρξης & Διάρκεια")
         
         date_frame_row = ctk.CTkFrame(sec_dates, fg_color="transparent")
-        date_frame_row.pack(pady=4, fill="x")
+        date_frame_row.pack(pady=2, fill="x")
         ctk.CTkLabel(date_frame_row, text="Ημερομηνία Έναρξης:", font=("Roboto", 12), width=155, anchor="w").pack(side="left")
 
         self.entry_date = DateEntry(
@@ -546,7 +546,7 @@ class ContractFormToplevel(MessageBoxMixin, ctk.CTkToplevel):
 
         # Quick-select κουμπιά διάρκειας
         presets_row = ctk.CTkFrame(sec_dates, fg_color="transparent")
-        presets_row.pack(fill="x", pady=(4, 6))
+        presets_row.pack(fill="x", pady=(2, 4))
         ctk.CTkLabel(presets_row, text="Γρήγορη Επιλογή:", font=("Roboto", 11), text_color="gray", width=155, anchor="w").pack(side="left")
         
         chips_container = ctk.CTkFrame(presets_row, fg_color="transparent")
@@ -575,7 +575,7 @@ class ContractFormToplevel(MessageBoxMixin, ctk.CTkToplevel):
             border_width=1,
             border_color=("#CBD5E1", "#3a4a54")
         )
-        self.expiry_preview_frame.pack(fill="x", pady=(6, 0))
+        self.expiry_preview_frame.pack(fill="x", pady=(4, 0))
         
         self.lbl_expiry_preview = ctk.CTkLabel(
             self.expiry_preview_frame,
@@ -622,10 +622,10 @@ class ContractFormToplevel(MessageBoxMixin, ctk.CTkToplevel):
         self.btn_clear_pdfs.pack(side="right")
         
         self.pdf_list_frame = ctk.CTkFrame(sec_extra, fg_color="transparent")
-        self.pdf_list_frame.pack(pady=(2, 8), fill="x")
+        self.pdf_list_frame.pack(pady=(2, 4), fill="x")
         self._update_pdf_list_display()
 
-        ctk.CTkLabel(sec_extra, text="Σχόλια / Παρατηρήσεις:", font=("Roboto", 12), anchor="w").pack(pady=(4, 4), fill="x")
+        ctk.CTkLabel(sec_extra, text="Σχόλια / Παρατηρήσεις:", font=("Roboto", 12), anchor="w").pack(pady=(2, 2), fill="x")
         self.text_comments = ctk.CTkTextbox(
             sec_extra,
             height=75,
