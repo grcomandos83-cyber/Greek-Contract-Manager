@@ -1,11 +1,33 @@
 import customtkinter as ctk
 import tkinter as tk
+from tkinter import messagebox, filedialog
+import json
+import os
+import uuid
+import sqlite3
+import logging
+from collections import OrderedDict
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
-from collections import OrderedDict
-import logging
+import updater
 import sys
-import os
+
+# Αλλαγή του CWD στον φάκελο του εκτελέσιμου για να αποθηκεύονται σωστά το log και η βάση.
+if getattr(sys, 'frozen', False):
+    os.chdir(os.path.dirname(sys.executable))
+else:
+    os.chdir(os.path.dirname(os.path.abspath(__file__)))
+
+# Configure logging
+logging.basicConfig(
+    level=logging.WARNING,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('contract_manager.log', encoding='utf-8'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
 
 from constants import DB_FILE, SETTINGS_FILE, PDF_FOLDER, BACKUP_FOLDER, COLOR_THEMES, SPECIAL_FIELD_TRANSLATIONS, APP_VERSION, REMINDER_CHECK_INTERVAL_MS, REMINDER_WARNING_DAYS
 from utils import create_backup, get_contract_status, get_resource_path
