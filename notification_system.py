@@ -24,7 +24,7 @@ class GlobalNotificationManager:
         self._initialized = True
         self.notification_window: Optional[tk.Tk] = None
         self.notification_label: Optional[ctk.CTkLabel] = None
-        self.notification_queue: List[tuple[str, str]] = []  # (message, color)
+        self.notification_queue: List[tuple[str, str, str, str, int]] = []  # (message, bg_color, text_color, border_color, duration_ms)
         self.notification_pending = False
         self.root: Optional[ctk.CTk] = None
         self.keep_on_top_timer_id: Optional[str] = None
@@ -64,7 +64,6 @@ class GlobalNotificationManager:
             except:
                 pass
         
-        # Επανάληψη κάθε 100ms
         if self.notification_pending:
             self.keep_on_top_timer_id = self.root.after(100, self._keep_notification_on_top)
     
@@ -72,7 +71,6 @@ class GlobalNotificationManager:
         """Εμφάνιση του επόμενου μηνύματος από την ουρά"""
         if not self.notification_queue:
             self.notification_pending = False
-            # Ακύρωση του timer για ανύψωση
             if self.keep_on_top_timer_id:
                 try:
                     self.root.after_cancel(self.keep_on_top_timer_id)
@@ -84,29 +82,23 @@ class GlobalNotificationManager:
         self.notification_pending = True
         message, bg_color, text_color, border_color, duration_ms = self.notification_queue.pop(0)
         
-        # Δημιουργία παράθυρου αν δεν υπάρχει
         if self.notification_window is None or not self.notification_window.winfo_exists():
             self._create_notification_window(bg_color, border_color)
         
-        # Ενημέρωση χρωμάτων
         self.notification_window.configure(bg=bg_color)
         self.notification_label.configure(text=message, fg=text_color)
         
-        # Εμφάνιση και ανύψωση παράθυρου
         self.notification_window.deiconify()
         self.notification_window.lift()
         self.notification_window.attributes("-topmost", True)
         
-        # Έναρξη συνεχούς ανύψωσης
         self._keep_notification_on_top()
         
-        # Απόκρυψη και εμφάνιση επόμενου
         def hide_and_next():
             if self.notification_window and self.notification_window.winfo_exists():
                 self.notification_window.withdraw()
                 self.notification_window.attributes("-topmost", False)
             
-            # Ακύρωση του timer για ανύψωση
             if self.keep_on_top_timer_id:
                 try:
                     self.root.after_cancel(self.keep_on_top_timer_id)
@@ -114,7 +106,6 @@ class GlobalNotificationManager:
                     pass
                 self.keep_on_top_timer_id = None
             
-            # Αν υπάρχουν περισσότερα μηνύματα, εμφάνισε το επόμενο
             if self.notification_queue:
                 self.root.after(300, self._display_next_notification)
             else:
@@ -129,19 +120,14 @@ class GlobalNotificationManager:
             logger.warning("Cannot create notification window: no root set")
             return
         
-        # Δημιουργία Toplevel αντί για δεύτερο Tk root
         self.notification_window = tk.Toplevel(self.root)
         self.notification_window.title("")
         self.notification_window.geometry("500x70")
         
-        # Ρυθμίσεις παράθυρου για να παραμείνει πάντα μπροστά
         self.notification_window.attributes("-topmost", True)
         self.notification_window.attributes("-toolwindow", True)
-        
-        # Αφαίρεση περιθωρίου παράθυρου (frameless)
         self.notification_window.overrideredirect(False)
         
-        # Τοποθέτηση στο κέντρο-πάνω της οθόνης
         try:
             screen_width = self.notification_window.winfo_screenwidth()
             screen_height = self.notification_window.winfo_screenheight()
@@ -151,18 +137,11 @@ class GlobalNotificationManager:
         except Exception:
             pass
         
-        # Ρύθμιση χρωμάτων
         self.notification_window.configure(bg=bg_color)
-        
-        # Frame με border
         border_frame = tk.Frame(self.notification_window, bg=border_color, highlightthickness=0)
         border_frame.pack(fill=tk.BOTH, expand=True, padx=2, pady=2)
-        
-        # Inner frame για το περιεχόμενο
         inner_frame = tk.Frame(border_frame, bg=bg_color, highlightthickness=0)
         inner_frame.pack(fill=tk.BOTH, expand=True, padx=1, pady=1)
-        
-        # Δημιουργία label
         self.notification_label = tk.Label(
             inner_frame,
             text="",
@@ -174,12 +153,9 @@ class GlobalNotificationManager:
             pady=10
         )
         self.notification_label.pack(padx=15, pady=5, expand=True)
-        
-        # Αρχικά κρυμμένο
         self.notification_window.withdraw()
 
 
-# Global instance
 notification_manager = GlobalNotificationManager()
 
 

@@ -8,6 +8,10 @@ BACKUP_FOLDER = "backups"
 APP_VERSION = "v1.0.27"
 GITHUB_REPO = "grcomandos83-cyber/Greek-Contract-Manager"
 
+# --- Background reminders ---
+REMINDER_CHECK_INTERVAL_MS = 60000
+REMINDER_WARNING_DAYS = 7
+
 # =========================================================================
 # === ΧΡΩΜΑΤΙΚΑ ΘΕΜΑΤΑ ===
 # =========================================================================
