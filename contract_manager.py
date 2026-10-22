@@ -1,37 +1,12 @@
 import customtkinter as ctk
 import tkinter as tk
-from tkinter import messagebox, filedialog
-import json
-import os
-import uuid
-import sqlite3
-import logging
-from collections import OrderedDict
-
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
-import updater
+import logging
 import sys
 import os
 
-# Αλλαγή του CWD στον φάκελο του εκτελέσιμου για να αποθηκεύονται σωστά το log και η βάση.
-if getattr(sys, 'frozen', False):
-    os.chdir(os.path.dirname(sys.executable))
-else:
-    os.chdir(os.path.dirname(os.path.abspath(__file__)))
-
-# Configure logging
-logging.basicConfig(
-    level=logging.WARNING,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('contract_manager.log', encoding='utf-8'),
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger(__name__)
-
-from constants import DB_FILE, SETTINGS_FILE, PDF_FOLDER, BACKUP_FOLDER, COLOR_THEMES, SPECIAL_FIELD_TRANSLATIONS, APP_VERSION
+from constants import DB_FILE, SETTINGS_FILE, PDF_FOLDER, BACKUP_FOLDER, COLOR_THEMES, SPECIAL_FIELD_TRANSLATIONS, APP_VERSION, REMINDER_CHECK_INTERVAL_MS, REMINDER_WARNING_DAYS
 from utils import create_backup, get_contract_status, get_resource_path
 from database import DatabaseManager
 from ui_forms import ContractFormToplevel, AdvancedSearchToplevel, CategoryManagerWindow, ContractRenewToplevel
@@ -46,7 +21,6 @@ ctk.set_appearance_mode("Light")
 ctk.set_default_color_theme("blue")
 
 # Καλείται κατά το κλείσιμο
-
 
 
 # =========================================================================
@@ -69,7 +43,7 @@ class ContractApp(ctk.CTk):
         
         try:
             self.iconbitmap(get_resource_path(os.path.join("assets", "app.ico")))
-        except Exception as e:
+        except Exception:
             pass
                 
         self.db_manager = DatabaseManager(DB_FILE)
@@ -90,10 +64,13 @@ class ContractApp(ctk.CTk):
         
         # Debounce & Performance Optimization
         self._last_search_time: float = 0
-        self._search_cache: OrderedDict[str, List[Dict[str, Any]]] = OrderedDict()  # LRU cache
-        self._min_query_interval: float = 0.25  # minimum 250ms between queries
-        self._debounce_delay: int = 600  # 600ms delay for user input
-        self._max_cache_size: int = 100  # Maximum cache entries before cleanup
+        self._search_cache: OrderedDict[str, List[Dict[str, Any]]] = OrderedDict()
+        self._min_query_interval: float = 0.25
+        self._debounce_delay: int = 600
+        self._max_cache_size: int = 100
+
+        self._reminder_job: Optional[str] = None
+        self._reminder_cache: Dict[str, datetime] = {}
         
         self.__app_setup_storage() 
         self.load_settings()
@@ -102,7 +79,6 @@ class ContractApp(ctk.CTk):
         self.grid_columnconfigure(1, weight=1) 
         self.grid_rowconfigure(0, weight=1)
 
-        # Left Side: Dashboard
         self.left_frame = ctk.CTkFrame(self, width=300, corner_radius=15)
         self.left_frame.grid(row=0, column=0, padx=20, pady=20, sticky="nsew")
         
@@ -123,52 +99,48 @@ class ContractApp(ctk.CTk):
         )
         self.dashboard_view.pack(fill="both", expand=True)
 
-        # Right Side: Content Area
         self.right_container = ctk.CTkFrame(self, fg_color="transparent")
         self.right_container.grid(row=0, column=1, padx=20, pady=20, sticky="nsew")
         
         self.setup_right_area() 
         
-        # Αρχικό γέμισμα λίστας & στατιστικών
         self.load_data_from_db()
         self.apply_filters()
         self.refresh_dashboard_stats()
         
         self.create_menubar()
         
-        # --- SIGNALS SUBSCRIPTION ---
         SignalManager.subscribe(Signals.CONTRACT_UPSERTED, self._on_contract_changed)
         SignalManager.subscribe(Signals.CONTRACT_DELETED, self._on_contract_changed)
         SignalManager.subscribe(Signals.CATEGORIES_UPDATED, self._on_categories_changed)
         
         self.optimize_performance()
         
-        # Αρχικοποίηση συστήματος ειδοποιήσεων
         notification_manager.set_root(self)
+        self.start_background_reminders()
         
-        # Έλεγχος για νέες εκδόσεις (αυτόματη ενημέρωση)
         updater.check_for_updates(self)
         
-        # Cleanup κατά το κλείσιμο
         self.protocol("WM_DELETE_WINDOW", self._on_closing)
-        
-
 
     def _on_closing(self):
         """Cleanup handler κατά το κλείσιμο της εφαρμογής."""
         try:
-            # Καταστροφή notification window αν υπάρχει
             if notification_manager.notification_window and notification_manager.notification_window.winfo_exists():
                 notification_manager.notification_window.destroy()
             
-            # Ακύρωση pending search jobs
+            if self._reminder_job is not None:
+                try:
+                    self.after_cancel(self._reminder_job)
+                except Exception:
+                    pass
+
             if self._search_job is not None:
                 try:
                     self.after_cancel(self._search_job)
                 except Exception:
                     pass
             
-            # Unsubscribe signals
             SignalManager.unsubscribe(Signals.CONTRACT_UPSERTED, self._on_contract_changed)
             SignalManager.unsubscribe(Signals.CONTRACT_DELETED, self._on_contract_changed)
             SignalManager.unsubscribe(Signals.CATEGORIES_UPDATED, self._on_categories_changed)
@@ -178,6 +150,77 @@ class ContractApp(ctk.CTk):
             logger.error(f"Σφάλμα κατά το κλείσιμο: {e}")
         finally:
             self.destroy()
+
+    def start_background_reminders(self):
+        """Run background expiry reminders in the Tkinter event loop."""
+        if self._reminder_job is not None:
+            try:
+                self.after_cancel(self._reminder_job)
+            except (ValueError, tk.TclError):
+                pass
+
+        self._check_background_reminders()
+        self._reminder_job = self.after(REMINDER_CHECK_INTERVAL_MS, self.start_background_reminders)
+
+    def _check_background_reminders(self):
+        """Show a banner alert for contracts that are expiring soon or already expired."""
+        try:
+            expired, expiring_soon = self.db_manager.get_expiring_contracts()
+            candidates = expired + expiring_soon
+            if not candidates:
+                return
+
+            for contract in candidates:
+                expiry_date = contract.get('expiry_date')
+                if not expiry_date:
+                    continue
+
+                status = get_contract_status(expiry_date)
+                if status not in {"EXPIRING_SOON", "EXPIRED"}:
+                    continue
+
+                if status == "EXPIRING_SOON":
+                    days_left = self._days_until_expiry(expiry_date)
+                    if days_left > REMINDER_WARNING_DAYS:
+                        continue
+                    message = (
+                        f"Η σύμβαση '{contract.get('provider', 'Σύμβαση')}' "
+                        f"({contract.get('number', '—')}) λήγει σε {days_left} ημέρες."
+                    )
+                    notification_type = "warning"
+                else:
+                    message = (
+                        f"Η σύμβαση '{contract.get('provider', 'Σύμβαση')}' "
+                        f"({contract.get('number', '—')}) έχει λήξει."
+                    )
+                    notification_type = "error"
+
+                reminder_key = f"{contract.get('id')}|{status}|{expiry_date}"
+                if reminder_key in self._reminder_cache:
+                    continue
+
+                notification_manager.show(message, notification_type, duration_ms=8000)
+                self._reminder_cache[reminder_key] = datetime.now()
+
+            self._prune_reminder_cache()
+        except Exception as exc:
+            logger.exception("Background reminder check failed: %s", exc)
+
+    def _days_until_expiry(self, expiry_date: str) -> int:
+        """Return days until expiry as a positive integer."""
+        try:
+            expiry_dt = datetime.strptime(expiry_date, "%d/%m/%Y")
+            delta = expiry_dt.date() - datetime.now().date()
+            return max(delta.days, 0)
+        except ValueError:
+            return 999
+
+    def _prune_reminder_cache(self):
+        """Keep reminder cache to a small recent window to prevent repeated spam."""
+        cutoff = datetime.now() - timedelta(days=2)
+        for key, stamped_at in list(self._reminder_cache.items()):
+            if stamped_at < cutoff:
+                del self._reminder_cache[key]
 
     def __app_setup_storage(self):
         if not os.path.exists(PDF_FOLDER): 
@@ -203,7 +246,6 @@ class ContractApp(ctk.CTk):
             
             logger.info(f"Φορτώθηκαν ρυθμίσεις: {len(self.categories)} κατηγορίες, θέμα: {self.current_theme}")
             
-            # Propagate theme to views if initialized
             if hasattr(self, 'dashboard_view'):
                 self.dashboard_view.update_theme(self.theme_colors)
                 self.refresh_dashboard_stats()
@@ -218,7 +260,7 @@ class ContractApp(ctk.CTk):
         except json.JSONDecodeError as json_err:
             logger.error(f"Σφάλμα ανάγνωσης ρυθμίσεων: {json_err}", exc_info=True)
             messagebox.showwarning("Σφάλμα Ρυθμίσεων",
-                                 "Το αρχείο ρυθμίσεων είναι κατεστραμμένο.\n\nΘα χρησιμοποιηθούν προεπιλογές.", parent=self)
+                                  "Το αρχείο ρυθμίσεων είναι κατεστραμμένο.\n\nΘα χρησιμοποιηθούν προεπιλογές.", parent=self)
             self.settings = {"categories": [], "current_theme": "Minimalist"}
             self.categories = []
             self.current_theme = "Minimalist"
@@ -267,20 +309,20 @@ class ContractApp(ctk.CTk):
             theme_frame.pack(fill="x", padx=20, pady=5)
             
             color_preview = ctk.CTkFrame(theme_frame, width=30, height=30, 
-                                       fg_color=colors["primary"],
-                                       corner_radius=5)
+                                        fg_color=colors["primary"],
+                                        corner_radius=5)
             color_preview.pack(side="left", padx=(0, 10))
             
             ctk.CTkButton(theme_frame, 
-                         text=theme_name,
-                         command=lambda tn=theme_name: self._apply_theme_and_close(tn, theme_window),
-                         fg_color=colors["primary"],
-                         hover_color=colors["secondary"],
-                         width=200).pack(side="left")
+                          text=theme_name,
+                          command=lambda tn=theme_name: self._apply_theme_and_close(tn, theme_window),
+                          fg_color=colors["primary"],
+                          hover_color=colors["secondary"],
+                          width=200).pack(side="left")
             
             if theme_name == self.current_theme:
                 ctk.CTkLabel(theme_frame, text="✓", 
-                           font=("Roboto", 16, "bold")).pack(side="right", padx=10)
+                            font=("Roboto", 16, "bold")).pack(side="right", padx=10)
 
     def _apply_theme_and_close(self, theme_name: str, window: ctk.CTkToplevel):
         self.change_theme(theme_name)
@@ -302,7 +344,7 @@ class ContractApp(ctk.CTk):
     def apply_theme_colors(self):
         self.dashboard_view.update_theme(self.theme_colors)
         self.contract_list_view.update_theme(self.theme_colors)
-        self.apply_filters() # Re-render cards
+        self.apply_filters()
 
     def _open_contract_form(self, contract_to_edit: Optional[Dict[str, Any]] = None):
         self.load_settings()
@@ -338,11 +380,7 @@ class ContractApp(ctk.CTk):
             self.focus_force()
             messagebox.showinfo(title="Επιτυχία", message=f"Η σύμβαση {msg}!", parent=self)
             
-            # Clear search cache when database is modified
             self._clear_search_cache()
-            
-            # Emit Signal instead of manual reload (though we reload to be sure we have fresh DB state)
-            # The signal listener will handle the UI update
             SignalManager.emit(Signals.CONTRACT_UPSERTED, result_contract)
             
         except sqlite3.Error as db_err:
@@ -382,7 +420,7 @@ class ContractApp(ctk.CTk):
         search_filter_frame.pack(fill="x", pady=(0, 10))
         
         self.entry_search = ctk.CTkEntry(search_filter_frame, 
-                                       placeholder_text="🔍 Αναζήτηση σε ΟΛΑ τα πεδία...")
+                                        placeholder_text="🔍 Αναζήτηση σε ΟΛΑ τα πεδία...")
         self.entry_search.pack(side="left", fill="x", expand=True, padx=(0, 10))
         self.entry_search.bind("<KeyRelease>", self._delayed_search)
         self.combo_filter = ctk.CTkComboBox(search_filter_frame, values=["Όλα"] + self.categories, 
@@ -391,21 +429,19 @@ class ContractApp(ctk.CTk):
         self.combo_filter.pack(side="left", padx=(0, 10))
         
         self.btn_advanced_search = ctk.CTkButton(search_filter_frame, text="🎯 Προχωρημένη", 
-                                               command=self.open_advanced_search,
-                                               width=120, fg_color="#8e44ad")
+                                                command=self.open_advanced_search,
+                                                width=120, fg_color="#8e44ad")
         self.btn_advanced_search.pack(side="left", padx=(0, 10))
         
         self.btn_clear_filters = ctk.CTkButton(search_filter_frame, text="🧹 Καθαρισμός", 
-                                             command=self.clear_all_filters,
-                                             width=100, fg_color="#7f8c8d")
+                                              command=self.clear_all_filters,
+                                              width=100, fg_color="#7f8c8d")
         self.btn_clear_filters.pack(side="left", padx=(0, 10))
         
-        # Headers
         self.list_header_frame = ctk.CTkFrame(self.right_container, fg_color="#3a3a3a", height=30)
         self.list_header_frame.pack(fill="x", pady=(0, 0))
         self.setup_list_headers()
 
-        # Contract List View
         callbacks = {
             'edit_contract': self.edit_contract,
             'delete_contract': self.delete_contract,
@@ -415,8 +451,8 @@ class ContractApp(ctk.CTk):
             'clear_filters': self.clear_all_filters
         }
         self.contract_list_view = ContractListView(self.right_container, 
-                                                 callbacks=callbacks,
-                                                 theme_colors=self.theme_colors)
+                                                  callbacks=callbacks,
+                                                  theme_colors=self.theme_colors)
         self.contract_list_view.pack(fill="both", expand=True)
 
     def open_advanced_search(self):
@@ -501,26 +537,20 @@ class ContractApp(ctk.CTk):
             search_text = self.entry_search.get().lower()
             category_filter = self.combo_filter.get()
             
-            # Create cache key
             cache_key = f"{search_text}|{category_filter}|{str(self.current_search_params)}|{str(self.current_status_filter)}"
             
-            # Check if result is in cache (LRU: move to end if found)
             if cache_key in self._search_cache:
-                # Move to end (most recently used)
                 self._search_cache.move_to_end(cache_key)
                 filtered_contracts = self._search_cache[cache_key]
                 logger.debug(f"Cache hit για αναζήτηση: {search_text[:50]}")
             else:
-                # Check if minimum interval has passed since last query
                 current_time = time.time()
                 time_since_last_query = current_time - self._last_search_time
                 
                 if time_since_last_query < self._min_query_interval:
-                    # Skip this query if too soon, will be retried on next debounce
                     logger.debug("Παράλειψη query λόγω minimum interval")
                     return
                 
-                # Execute database query
                 self._last_search_time = current_time
                 logger.debug(f"Εκτέλεση query για: {search_text[:50]}")
                 
@@ -531,7 +561,6 @@ class ContractApp(ctk.CTk):
                         try:
                             filtered_contracts = self.db_manager.fts_search(search_text)
                             if category_filter != "Όλα":
-                                # Ανοχή σε τυχόν κενά/πεζά-κεφαλαία στα αποθηκευμένα types
                                 normalized_filter = category_filter.strip().lower()
                                 filtered_contracts = [
                                     c for c in filtered_contracts
@@ -543,7 +572,6 @@ class ContractApp(ctk.CTk):
                     else:
                         filtered_contracts = self.db_manager.search_contracts_comprehensive(search_text, category_filter)
                         
-                    # Εφαρμογή φίλτρου κατάστασης (από clickable KPI cards)
                     if self.current_status_filter:
                         filtered_contracts = [
                             c for c in filtered_contracts
@@ -557,24 +585,19 @@ class ContractApp(ctk.CTk):
                                        f"Σφάλμα κατά την αναζήτηση στη βάση:\n\n{str(db_err)}", parent=self)
                     filtered_contracts = []
                 
-                # LRU Cache management: remove oldest if cache is full
                 if len(self._search_cache) >= self._max_cache_size:
-                    # Remove oldest entry (first item in OrderedDict)
                     self._search_cache.popitem(last=False)
                     logger.debug("Αφαίρεση παλαιότερου cache entry")
                 
-                # Add new entry (will be at the end)
                 self._search_cache[cache_key] = filtered_contracts
             
             self._sort_contracts(filtered_contracts)
             self.current_filtered_contracts = filtered_contracts
             
-            # Update View
             self.contract_list_view.update_contracts(filtered_contracts)
             
         except tk.TclError as tcl_err:
             logger.error(f"Σφάλμα Tkinter κατά την εφαρμογή φίλτρων: {tcl_err}", exc_info=True)
-            # Don't show messagebox for Tkinter errors during widget destruction
         except Exception as e:
             logger.error(f"Απροσδόκητο σφάλμα κατά την εφαρμογή φίλτρων: {e}", exc_info=True)
             self.lift()
@@ -586,7 +609,6 @@ class ContractApp(ctk.CTk):
         reverse_order = self.sort_direction == 'desc'
         sort_key = self.sort_column
         
-        # Cache for parsed dates to avoid repeated parsing
         date_cache = {}
         default_date = datetime.strptime('01/01/0001', '%d/%m/%Y')
         
@@ -594,7 +616,6 @@ class ContractApp(ctk.CTk):
             if sort_key == 'expiry_date':
                 date_str = contract.get('expiry_date')
                 if date_str:
-                    # Check cache first
                     if date_str not in date_cache:
                         try:
                             date_cache[date_str] = datetime.strptime(date_str, '%d/%m/%Y')
@@ -608,9 +629,6 @@ class ContractApp(ctk.CTk):
         
         contracts.sort(key=get_sort_key_value, reverse=reverse_order)
 
-    # Bulk Operations methods removed as per user request
-
-
     def open_pdf(self, path: str):
         """Open PDF file with appropriate system viewer."""
         if not os.path.exists(path):
@@ -623,9 +641,8 @@ class ContractApp(ctk.CTk):
         
         try:
             logger.info(f"Άνοιγμα PDF: {path}")
-            os.startfile(path)  # type: ignore
+            os.startfile(path)
         except AttributeError:
-            # os.startfile is Windows-only
             try:
                 import subprocess, sys
                 opener = "open" if sys.platform == "darwin" else "xdg-open"
@@ -677,10 +694,7 @@ class ContractApp(ctk.CTk):
                 self.after_cancel(self._search_job)
             except (ValueError, tk.TclError):
                 pass
-        # Use 300ms delay instead of 50ms to significantly reduce database queries
         self._search_job = self.after(self._debounce_delay, self.apply_filters)
-
-
 
     def create_menubar(self):
         menubar = tk.Menu(self)
@@ -736,10 +750,8 @@ class ContractApp(ctk.CTk):
         except Exception as e:
             logger.error(f"Unexpected initialization error: {e}", exc_info=True)
             messagebox.showerror("Σφάλμα", f"Απροσδόκητο σφάλμα:\n\n{e}", parent=self)
+
     def open_category_manager(self):
-        # The CategoryManagerWindow emits Signals.CATEGORIES_UPDATED
-        # which is handled by self._on_categories_changed.
-        # No manual callback needed for refreshing.
         CategoryManagerWindow(self, self.categories, self.db_manager)
 
     def manual_backup(self):
@@ -780,14 +792,13 @@ class ContractApp(ctk.CTk):
             )
             if filename:
                 logger.info(f"Εξαγωγή δεδομένων σε: {filename}")
-                # Fresh query αντί για cached contracts_data
                 export_data = self.db_manager.get_all_contracts()
                 with open(filename, 'w', encoding='utf-8') as f:
                     json.dump(export_data, f, ensure_ascii=False, indent=4)
                 logger.info(f"Εξήχθησαν {len(export_data)} συμβάσεις επιτυχώς")
                 self.lift()
                 self.focus_force()
-                messagebox.showinfo("Εξαγωγή", f"Τα δεδομένα εξήχθησαν επιτυχώς!\n\nΑρχείο: {filename}\nΣυμβάσεις: {len(self.contracts_data)}", parent=self)
+                messagebox.showinfo("Εξαγωγή", f"Τα δεδομένα εξήχθησαν επιτυχώς!\n\nΑρχείο: {filename}\nΣυμβάσεις: {len(export_data)}", parent=self)
         except IOError as io_err:
             logger.error(f"Σφάλμα I/O κατά την εξαγωγή: {io_err}", exc_info=True)
             self.lift()
@@ -836,12 +847,12 @@ class ContractApp(ctk.CTk):
                             self.db_manager.update_contract(contract)
                         else:
                             self.db_manager.insert_contract(contract)
-                        success_count += 1  # type: ignore
+                        success_count += 1
                     except sqlite3.Error as db_err:
-                        error_count += 1  # type: ignore
+                        error_count += 1
                         logger.error(f"Σφάλμα εισαγωγής σύμβασης {i+1}: {db_err}")
                     except Exception as e:
-                        error_count += 1  # type: ignore
+                        error_count += 1
                         logger.error(f"Σφάλμα επεξεργασίας σύμβασης {i+1}: {e}")
                 
                 SignalManager.emit(Signals.CONTRACT_UPSERTED, None)
@@ -851,13 +862,12 @@ class ContractApp(ctk.CTk):
                     self.lift()
                     self.focus_force()
                     messagebox.showwarning("Εισαγωγή με Σφάλματα",
-                                         f"Εισήχθησαν {success_count} συμβάσεις επιτυχώς.\n\n{error_count} συμβάσεις απέτυχαν.", parent=self)
+                                          f"Εισήχθησαν {success_count} συμβάσεις επιτυχώς.\n\n{error_count} συμβάσεις απέτυχαν.", parent=self)
                 else:
                     logger.info(f"Εισήχθησαν {success_count} συμβάσεις επιτυχώς")
                     self.lift()
                     self.focus_force()
                     messagebox.showinfo("Εισαγωγή", f"Εισήχθησαν {success_count} συμβάσεις επιτυχώς!", parent=self)
-                    
             except FileNotFoundError:
                 logger.error(f"Το αρχείο δεν βρέθηκε: {filename}")
                 self.lift()
@@ -892,8 +902,6 @@ class ContractApp(ctk.CTk):
             messagebox.showinfo("Ειδοποιήσεις", "Δεν υπάρχουν συμβάσεις που λήγουν σύντομα ή έχουν λήξει.", parent=self)
 
     def show_notifications_window(self, expired: List[Dict], expiring_soon: List[Dict]):
-        # Reuse existing logic logic, but for brevity/cleanliness we could extract this too.
-        # Implemented for completeness similar to original.
         notif_window = ctk.CTkToplevel(self)
         notif_window.title("Ειδοποιήσεις Συμβάσεων")
         notif_window.geometry("600x400")
@@ -916,15 +924,12 @@ class ContractApp(ctk.CTk):
         scroll_frame.pack(fill="both", expand=True)
 
         for contract in contracts:
-            # Card Container
             frame = ctk.CTkFrame(scroll_frame, fg_color=bg_color, corner_radius=12, border_width=1, border_color="#e0e0e0")
             frame.pack(fill="x", pady=5, padx=5)
 
-            # Content Frame
             content = ctk.CTkFrame(frame, fg_color="transparent")
             content.pack(padx=10, pady=10, fill="x")
 
-            # Info Text
             provider = contract['provider']
             number = contract['number']
             expiry = contract.get('expiry_date', 'N/A')
@@ -937,7 +942,6 @@ class ContractApp(ctk.CTk):
             ctk.CTkLabel(content, text=f"Αρ. Σύμβασης: {number}", font=("Roboto", 12), text_color="#5d6d7e").pack(anchor="w")
             ctk.CTkLabel(content, text=f"Είδος: {contract_type}", font=("Roboto", 12), text_color="#5d6d7e").pack(anchor="w")
 
-            # Date row
             date_info = f"Έναρξη: {start_date}"
             if months:
                 date_info += f"   |   Διάρκεια: {months} μήνες"
@@ -951,7 +955,6 @@ class ContractApp(ctk.CTk):
             else:
                 ctk.CTkFrame(content, height=5, fg_color="transparent").pack()
             
-            # Buttons
             btn_frame = ctk.CTkFrame(content, fg_color="transparent")
             btn_frame.pack(fill="x", pady=(5, 0))
             
@@ -964,7 +967,7 @@ class ContractApp(ctk.CTk):
             ctk.CTkButton(btn_frame, text="✎ Επεξεργασία", height=28, width=100, 
                          fg_color=self.theme_colors["secondary"],
                          command=lambda c=contract: self.edit_contract(c)).pack(side="left", padx=(0, 5))
-                         
+                          
             if contract.get('pdf_path'):
                 ctk.CTkButton(btn_frame, text="📄 PDF", height=28, width=70, 
                              fg_color=self.theme_colors["primary"],
@@ -1022,7 +1025,6 @@ class ContractApp(ctk.CTk):
         if messagebox.askyesno("Επιβεβαίωση", "Είστε σίγουρος/η για τη διαγραφή;", parent=self):
             try:
                 self.db_manager.delete_contract(contract_id)
-                # Clear search cache when database is modified
                 self._clear_search_cache()
                 SignalManager.emit(Signals.CONTRACT_DELETED, contract_id)
                 self.lift()
@@ -1039,7 +1041,6 @@ class ContractApp(ctk.CTk):
             messagebox.showinfo("Πληροφορία", "Δεν υπάρχουν συμβάσεις για προβολή εκδόσεων")
             return
         
-        # Λήψη της πρώτης ορατής σύμβασης (ή επιλογή από τον χρήστη)
         contract = self.current_filtered_contracts[0]
         
         try:
