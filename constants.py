@@ -5,7 +5,7 @@ PDF_FOLDER = "contract_pdfs"
 BACKUP_FOLDER = "backups"
 
 # --- Στοιχεία Εφαρμογής & Ενημερώσεων ---
-APP_VERSION = "v1.0.29"
+APP_VERSION = "v1.0.30"
 GITHUB_REPO = "grcomandos83-cyber/Greek-Contract-Manager"
 
 # --- Background reminders ---

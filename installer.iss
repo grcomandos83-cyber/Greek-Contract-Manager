@@ -8,7 +8,7 @@
 #define MyAppExeName "ContractManager.exe"
 
 #ifndef MyAppVersion
-#define MyAppVersion "1.0.29"
+#define MyAppVersion "1.0.30"
 #endif
 
 [Setup]
@@ -57,10 +57,10 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 
 [Run]
 ; 1. Διαδραστική εκτέλεση μετά την εγκατάσταση
-Filename: "{app}\launcher.bat"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: runhidden nowait postinstall skipifsilent; Check: ShouldLaunchInteractive
+Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent; Check: ShouldLaunchInteractive
 
-; 2. Αθόρυβη επανεκκίνηση κατά το Silent Auto-Update
-Filename: "{app}\launcher.bat"; Flags: runhidden nowait; Check: ShouldLaunchSilent
+; 2. Αθόρυβη επανεκκίνηση κατά το Silent Auto-Update (με shellexec για ταυτόχρονη εκτέλεση του .bat)
+Filename: "{app}\launcher.bat"; Flags: shellexec runhidden nowait; Check: ShouldLaunchSilent
 
 [Code]
 function ShouldLaunchSilent(): Boolean;

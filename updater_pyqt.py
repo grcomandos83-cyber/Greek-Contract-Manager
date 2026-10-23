@@ -368,32 +368,68 @@ def launch_silent_installer(installer_path: str):
     if not os.path.exists(installer_path):
         raise FileNotFoundError(f"Δεν βρέθηκε το αρχείο εγκατάστασης: {installer_path}")
 
-    clean_env = os.environ.copy()
-    pyinstaller_keys = [
-        k for k in clean_env.keys()
-        if k.startswith(("_MEI", "_PYI", "PYINSTALLER"))
-        or k in ("PYTHONPATH", "PYTHONHOME")
-    ]
-    for key in pyinstaller_keys:
-        clean_env.pop(key, None)
+    if not getattr(sys, 'frozen', False):
+        app_instance = QApplication.instance()
+        QMessageBox.information(
+            None,
+            "Λειτουργία Ανάπτυξης",
+            "Η δοκιμαστική λήψη ολοκληρώθηκε επιτυχώς!\n\n"
+            "Επειδή εκτελείτε την εφαρμογή από πηγαίο κώδικα Python (όχι από .exe), "
+            "η αυτόματη εγκατάσταση παρακάμπτεται για λόγους ασφαλείας."
+        )
+        try:
+            if os.path.exists(installer_path):
+                os.remove(installer_path)
+        except Exception:
+            pass
+        return
 
+    app_exe = os.path.abspath(sys.executable)
+    app_dir = os.path.dirname(app_exe)
+    norm_installer = os.path.abspath(installer_path)
+
+    runner_bat_path = os.path.join(tempfile.gettempdir(), f"pyqt_updater_{os.getpid()}.bat")
+    bat_content = (
+        "@echo off\r\n"
+        "chcp 65001 >nul 2>&1\r\n"
+        "setlocal\r\n"
+        "ping 127.0.0.1 -n 3 >nul 2>&1\r\n"
+        f'"{norm_installer}" /VERYSILENT /SUPPRESSMSGBOXES /CLOSEAPPLICATIONS /FORCECLOSEAPPLICATIONS /NORESTART /DIR="{app_dir}"\r\n'
+        "ping 127.0.0.1 -n 3 >nul 2>&1\r\n"
+        "set _MEIPASS2=\r\n"
+        "set _MEIPASS=\r\n"
+        "set _PYI_APPLICATION_HOME_DIR=\r\n"
+        "set _PYI_ARCHIVE_FILE=\r\n"
+        "set _PYI_PARENT_PROCESS_LEVEL=\r\n"
+        "set PYTHONPATH=\r\n"
+        "set PYTHONHOME=\r\n"
+        "set PYINSTALLER_STRICT_UNPACK_PROCESS=\r\n"
+        "set PYINSTALLER_RESET_ENVIRONMENT=1\r\n"
+        f'cd /d "{app_dir}"\r\n'
+        f'if exist "{app_dir}\\launcher.bat" (\r\n'
+        f'    start "" "{app_dir}\\launcher.bat"\r\n'
+        f') else if exist "{app_exe}" (\r\n'
+        f'    start "" "{app_exe}"\r\n'
+        f')\r\n'
+        '(goto) 2>nul & del "%~f0"\r\n'
+    )
+
+    with open(runner_bat_path, "w", encoding="utf-8", newline="\r\n") as f:
+        f.write(bat_content)
+
+    clean_env = os.environ.copy()
+    for key in list(clean_env.keys()):
+        if key.startswith(("_MEI", "_PYI", "PYINSTALLER")) or key in ("PYTHONPATH", "PYTHONHOME"):
+            clean_env.pop(key, None)
     clean_env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
 
     DETACHED_PROCESS = 0x00000008
-    CREATE_NEW_PROCESS_GROUP = 0x00000200
-    creation_flags = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
-
-    installer_args = [
-        installer_path,
-        "/SILENT",
-        "/CLOSEAPPLICATIONS",
-        "/NORESTART"
-    ]
+    CREATE_NO_WINDOW = 0x08000000
 
     subprocess.Popen(
-        installer_args,
+        f'cmd.exe /d /c ""{runner_bat_path}""',
         env=clean_env,
-        creationflags=creation_flags,
+        creationflags=DETACHED_PROCESS | CREATE_NO_WINDOW,
         cwd=tempfile.gettempdir(),
         close_fds=True
     )

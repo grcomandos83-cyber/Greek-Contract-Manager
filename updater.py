@@ -1,8 +1,7 @@
 """
-updater.py - Υβριδικός & Ασφαλής Μηχανισμός Auto-Update για Windows.
+updater.py - Υβριδικός & Απόλυτα Ασφαλής Μηχανισμός Auto-Update για Windows.
 
-Υποστηρίζει απρόσκοπτα τόσο CustomTkinter / Tkinter (όπως το ContractManager)
-όσο και PyQt6 εφαρμογές, εφαρμόζοντας τις αυστηρές προδιαγραφές του Master Prompt:
+Χαρακτηριστικά Ασφαλείας & Εγγυημένης Επανεκκίνησης:
 1. Background Checking χωρίς πάγωμα του GUI.
 2. Σημασιολογική σύγκριση εκδόσεων με packaging.version.Version (αγνοώντας 'v').
 3. Αυτόματος εντοπισμός installer (.exe με setup/install) από τα assets.
@@ -10,9 +9,12 @@ updater.py - Υβριδικός & Ασφαλής Μηχανισμός Auto-Updat
 5. UI Throttling (~40ms / 25fps) για αποφυγή συμφόρησης του Event Loop.
 6. Υπολογισμός πραγματικής στιγμιαίας ταχύτητας (MB/s) και ποσοστού λήψης.
 7. Safe Cancellation με άμεσο κλείσιμο socket και διαγραφή ημιτελών αρχείων.
-8. Πλήρης καθαρισμός os.environ (_MEIPASS, _PYI*, PYINSTALLER*, PYTHONPATH, PYTHONHOME).
-9. Detached Process (/SILENT, /CLOSEAPPLICATIONS, /NORESTART) με DETACHED_PROCESS.
-10. Άμεσος τερματισμός με os._exit(0) για αποφυγή File Locking.
+8. Safe Delay Trampoline Runner (update_runner.bat):
+   - Αναμονή 2 δευτερολέπτων για πλήρη απελευθέρωση file handles/DLLs από τα Windows.
+   - Εκτέλεση Inno Setup με /VERYSILENT /SUPPRESSMSGBOXES /FORCECLOSEAPPLICATIONS /DIR="<app_dir>".
+   - Καθαρισμός os.environ (_MEIPASS, _PYI*, PYINSTALLER*, PYTHONPATH, PYTHONHOME).
+   - Εγγυημένη επανεκκίνηση της νέας έκδοσης με launcher.bat.
+   - Υποστήριξη chcp 65001 για ελληνικά μονοπάτια φακέλων (Unicode paths).
 """
 
 import os
@@ -44,7 +46,7 @@ except ImportError:
     try:
         from constants import APP_VERSION as __version__, GITHUB_REPO
     except ImportError:
-        __version__ = "1.0.0"
+        __version__ = "1.0.30"
         GITHUB_REPO = "grcomandos83-cyber/Greek-Contract-Manager"
 
 
@@ -112,46 +114,107 @@ def find_installer_asset(assets: list) -> Optional[Dict[str, Any]]:
 
 def sanitize_and_launch_installer(installer_path: str, parent=None):
     """
-    Εκκινεί τον Inno Setup Installer σε Detached Process με πλήρη καθαρισμό
-    του περιβάλλοντος και τερματίζει ακαριαία την τρέχουσα εφαρμογή.
+    Εκκινεί τον Inno Setup Installer μέσω ενός εξωτερικού Trampoline Runner Script
+    με πλήρη καθαρισμό περιβάλλοντος, εγγυημένο delay για απελευθέρωση file locks
+    και αυτόματη επανεκκίνηση της νέας έκδοσης.
     """
     if not os.path.exists(installer_path):
         raise FileNotFoundError(f"Δεν βρέθηκε το αρχείο εγκατάστασης: {installer_path}")
 
-    # 1. Πλήρης Καθαρισμός Περιβάλλοντος (Environment Sanitization)
-    clean_env = os.environ.copy()
-    pyinstaller_keys = [
-        k for k in clean_env.keys()
-        if k.startswith(("_MEI", "_PYI", "PYINSTALLER"))
-        or k in ("PYTHONPATH", "PYTHONHOME")
-    ]
-    for key in pyinstaller_keys:
-        clean_env.pop(key, None)
+    # Έλεγχος μεγέθους αρχείου: πρέπει να είναι έγκυρος installer (> 1 MB)
+    if os.path.getsize(installer_path) < 1024 * 1024:
+        raise ValueError("Το αρχείο εγκατάστασης που λήφθηκε φαίνεται κατεστραμμένο ή ημιτελές.")
 
+    # 1. Έλεγχος αν τρέχουμε σε περιβάλλον ανάπτυξης (πηγαίος κώδικας .py)
+    if not getattr(sys, 'frozen', False):
+        from tkinter import messagebox
+        file_size_mb = os.path.getsize(installer_path) / (1024 * 1024)
+        messagebox.showinfo(
+            "Λειτουργία Ανάπτυξης",
+            f"Η δοκιμαστική λήψη ολοκληρώθηκε επιτυχώς ({file_size_mb:.1f} MB)!\n\n"
+            "Επειδή εκτελείτε την εφαρμογή από πηγαίο κώδικα Python (όχι από .exe), "
+            "η αυτόματη εγκατάσταση παρακάμπτεται για λόγους ασφαλείας.",
+            parent=parent
+        )
+        try:
+            if os.path.exists(installer_path):
+                os.remove(installer_path)
+        except Exception:
+            pass
+        return
+
+    # 2. Προσδιορισμός διαδρομών της τρέχουσας εκτελέσιμης εφαρμογής
+    app_exe = os.path.abspath(sys.executable)
+    app_dir = os.path.dirname(app_exe)
+    norm_installer = os.path.abspath(installer_path)
+
+    # 3. Δημιουργία Trampoline Runner Script στο %TEMP% με υποστήριξη UTF-8 (chcp 65001)
+    runner_bat_path = os.path.join(tempfile.gettempdir(), f"cm_updater_{os.getpid()}.bat")
+
+    bat_content = (
+        "@echo off\r\n"
+        "chcp 65001 >nul 2>&1\r\n"
+        "setlocal\r\n"
+        "\r\n"
+        "rem =========================================================================\r\n"
+        "rem Greek Contract Manager Auto-Update Runner\r\n"
+        "rem =========================================================================\r\n"
+        "\r\n"
+        "rem 1. Αναμονή 2 δευτερολέπτων για να τερματίσει πλήρως η παλιά εφαρμογή\r\n"
+        "ping 127.0.0.1 -n 3 >nul 2>&1\r\n"
+        "\r\n"
+        "rem 2. Εκτέλεση του Inno Setup Installer με ακριβή προορισμό τον φάκελο της εφαρμογής\r\n"
+        f'"{norm_installer}" /VERYSILENT /SUPPRESSMSGBOXES /CLOSEAPPLICATIONS /FORCECLOSEAPPLICATIONS /NORESTART /DIR="{app_dir}"\r\n'
+        "\r\n"
+        "rem 3. Αναμονή 1.5 δευτερολέπτου για ολοκλήρωση της αντικατάστασης των αρχείων\r\n"
+        "ping 127.0.0.1 -n 3 >nul 2>&1\r\n"
+        "\r\n"
+        "rem 4. Καθαρισμός μεταβλητών PyInstaller πριν την επανεκκίνηση\r\n"
+        "set _MEIPASS2=\r\n"
+        "set _MEIPASS=\r\n"
+        "set _PYI_APPLICATION_HOME_DIR=\r\n"
+        "set _PYI_ARCHIVE_FILE=\r\n"
+        "set _PYI_PARENT_PROCESS_LEVEL=\r\n"
+        "set PYTHONPATH=\r\n"
+        "set PYTHONHOME=\r\n"
+        "set PYINSTALLER_STRICT_UNPACK_PROCESS=\r\n"
+        "set PYINSTALLER_RESET_ENVIRONMENT=1\r\n"
+        "\r\n"
+        "rem 5. Εγγυημένη επανεκκίνηση της εφαρμογής στον σωστό φάκελο\r\n"
+        f'cd /d "{app_dir}"\r\n'
+        f'if exist "{app_dir}\\launcher.bat" (\r\n'
+        f'    start "" "{app_dir}\\launcher.bat"\r\n'
+        f') else if exist "{app_exe}" (\r\n'
+        f'    start "" "{app_exe}"\r\n'
+        f')\r\n'
+        "\r\n"
+        "rem 6. Αυτοκαταστροφή του προσωρινού runner script\r\n"
+        '(goto) 2>nul & del "%~f0"\r\n'
+    )
+
+    with open(runner_bat_path, "w", encoding="utf-8", newline="\r\n") as f:
+        f.write(bat_content)
+
+    # 4. Καθαρισμός os.environ για τη νέα διεργασία
+    clean_env = os.environ.copy()
+    for key in list(clean_env.keys()):
+        if key.startswith(("_MEI", "_PYI", "PYINSTALLER")) or key in ("PYTHONPATH", "PYTHONHOME"):
+            clean_env.pop(key, None)
     clean_env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
 
-    # 2. Σημαίες Windows για Detached Process
     DETACHED_PROCESS = 0x00000008
-    CREATE_NEW_PROCESS_GROUP = 0x00000200
-    creation_flags = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+    CREATE_NO_WINDOW = 0x08000000
 
-    installer_args = [
-        installer_path,
-        "/SILENT",
-        "/CLOSEAPPLICATIONS",
-        "/NORESTART"
-    ]
-
-    # 3. Εκτέλεση με Working Directory το Temp Directory
+    # 5. Εκτέλεση του Trampoline Runner αποσυνδεδεμένου (Detached)
     subprocess.Popen(
-        installer_args,
+        f'cmd.exe /d /c ""{runner_bat_path}""',
         env=clean_env,
-        creationflags=creation_flags,
+        creationflags=DETACHED_PROCESS | CREATE_NO_WINDOW,
         cwd=tempfile.gettempdir(),
         close_fds=True
     )
 
-    # 4. Άμεσος τερματισμός για απελευθέρωση file handles & DLLs
+    # 6. Κλείσιμο παραθύρου και ακαριαίος τερματισμός (απελευθέρωση handles & DLLs)
     if parent is not None and hasattr(parent, "destroy"):
         try:
             parent.destroy()
@@ -349,8 +412,8 @@ class TkDownloadProgressDialog:
         self.messagebox.showinfo(
             "Ετοιμότητα Εγκατάστασης",
             "Η λήψη της νέας έκδοσης ολοκληρώθηκε με επιτυχία!\n\n"
-            "Η εφαρμογή θα τερματιστεί τώρα αυτόματα για να εφαρμοστεί η ενημέρωση "
-            "και θα επανεκκινήσει αυτόματα.",
+            "Η εφαρμογή θα τερματιστεί τώρα για να ολοκληρωθεί η εγκατάσταση "
+            "και θα επανεκκινήσει αυτόματα σε λίγα δευτερόλεπτα.",
             parent=self.master
         )
 
@@ -460,7 +523,6 @@ def check_for_updates(parent=None, silent: bool = True, repo: str = GITHUB_REPO)
     if _is_tk_or_ctk_widget(parent):
         _check_updates_tk(parent=parent, silent=silent, repo=repo)
     else:
-        # Έλεγχος αν τρέχει PyQt6
         try:
             from PyQt6.QtWidgets import QApplication
             if QApplication.instance() is not None:
@@ -469,5 +531,4 @@ def check_for_updates(parent=None, silent: bool = True, repo: str = GITHUB_REPO)
         except ImportError:
             pass
 
-        # Fallback σε Tkinter αν υπάρχει parent ή γενικό thread
         _check_updates_tk(parent=parent, silent=silent, repo=repo)
